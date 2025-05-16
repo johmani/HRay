@@ -1,0 +1,3 @@
+[submodule "Plugins/HEImGui"]
+	path = Plugins/HEImGui
+	url = https://github.com/johmani/HEImGui.git

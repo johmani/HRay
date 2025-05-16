@@ -1,0 +1,10 @@
+﻿.vs
+Build
+Source/HRay/Embeded/dxil
+Source/HRay/Embeded/spirv
+*.log
+*.sln
+*.vcxproj
+*.filters
+*.user
+*.ini
