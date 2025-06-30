@@ -1,3 +1,6 @@
 [submodule "Plugins/HEImGui"]
 	path = Plugins/HEImGui
 	url = https://github.com/johmani/HEImGui.git
+[submodule "Plugins/Assets"]
+	path = Plugins/Assets
+	url = https://github.com/johmani/Assets.git

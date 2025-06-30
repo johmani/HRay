@@ -1,0 +1,39 @@
+{
+	"bindings" : [
+		{
+			"name" : "Restart",
+			"modifiers" : [ "Left Shift" ],
+			"code" : "Escape",
+			"eventType" : "Key Pressed",
+			"eventCategory" : "Keyboard"
+		},
+		{
+			"name" : "Shutdown",
+			"modifiers" : [  ],
+			"code" : "Escape",
+			"eventType" : "Key Pressed",
+			"eventCategory" : "Keyboard"
+		},
+		{
+			"name" : "ToggleScreenState",
+			"modifiers" : [ "Left Shift" ],
+			"code" : "F",
+			"eventType" : "Key Pressed",
+			"eventCategory" : "Keyboard"
+		},
+		{
+			"name" : "ToggleWindowState",
+			"modifiers" : [ "Left Shift" ],
+			"code" : "M",
+			"eventType" : "Key Pressed",
+			"eventCategory" : "Keyboard"
+		},
+		{
+			"name" : "ToggleCursorState",
+			"modifiers" : [ "Left Shift" ],
+			"code" : "H",
+			"eventType" : "Key Pressed",
+			"eventCategory" : "Keyboard"
+		}
+	]
+}

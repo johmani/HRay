@@ -57,6 +57,10 @@ workspace "HRay"
                 "Source/**.cppm",
                 "Source/Shaders/**.hlsl",
                 "*.lua",
+
+                "Resources/Icons/HRay.aps",
+                "Resources/Icons/HRay.rc",
+                "Resources/Icons/resource.h",
             }
 
             includedirs {
@@ -67,11 +71,13 @@ workspace "HRay"
             links {
             
                 "ImGui",
+                "Assets",
             }
 
             buildoptions {
             
                 AddCppm("imgui"),
+                AddCppm("Assets"),
             }
 
             SetupShaders(

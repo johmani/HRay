@@ -1,6 +1,4 @@
-#include "HydraEngine/Base.h"
-#include <format>
-#include "Embeded/icon.h"
+#include <HydraEngine/Base.h>
 
 #if NVRHI_HAS_D3D12
 #include "Embeded/dxil/Main.bin.h"
@@ -10,65 +8,191 @@
 #include "Embeded/spirv/Main.bin.h"
 #endif
 
-import HE;
-import std;
-import Math;
+import HRay;
 import nvrhi;
-import ImGui;
-import Utils;
-import Editor;
+import HE;
+import Assets;
 
-using namespace HE;
+struct MeshSourceBuffers
+{
+    nvrhi::BufferHandle indexBuffer;
+    nvrhi::BufferHandle vertexBuffer;
+};
 
-namespace HRay {
+struct MeshSourceDescriptors
+{
+    Assets::DescriptorHandle indexBufferDescriptor;
+    Assets::DescriptorHandle vertexBufferDescriptor;
+};
 
-    struct ViewBuffer
+static void CreateOrResizeRenderTarget(HRay::RendererData& data, uint32_t width, uint32_t height)
+{
+    HE_PROFILE_FUNCTION();
+
+    data.renderTarget.Reset();
+
+    nvrhi::TextureDesc textureDesc;
+    textureDesc.width = width;
+    textureDesc.height = height;
+    textureDesc.initialState = nvrhi::ResourceStates::UnorderedAccess;
+    textureDesc.format = nvrhi::Format::RGBA8_UNORM;
+    textureDesc.keepInitialState = true;
+    textureDesc.isRenderTarget = false;
+    textureDesc.isUAV = true;
+    data.renderTarget = data.device->createTexture(textureDesc);
+
+    data.bindingSet.Reset();
+}
+
+static void CreateOrResizeGeoBuffer(HRay::RendererData& data, uint32_t newSize)
+{
+    HE_PROFILE_FUNCTION();
+
+    data.geometryData.resize(newSize);
+    nvrhi::BufferDesc bufferDesc;
+    bufferDesc.byteSize = sizeof(HRay::GeometryData) * data.geometryData.size();
+    bufferDesc.debugName = "Geometry";
+    bufferDesc.structStride = sizeof(HRay::GeometryData);
+    bufferDesc.canHaveRawViews = true;
+    bufferDesc.canHaveUAVs = true;
+    bufferDesc.initialState = nvrhi::ResourceStates::ShaderResource;
+    bufferDesc.keepInitialState = true;
+    data.geometryBuffer = data.device->createBuffer(bufferDesc);
+
+    data.bindingSet.Reset();
+}
+
+static void CreateOrResizeInstanceBuffer(HRay::RendererData& data, uint32_t newSize)
+{
+    HE_PROFILE_FUNCTION();
+
+    // topLevelAS
     {
-        Math::float4x4 clipToWorld;
+        data.instances.resize(newSize);
+        const size_t maxInstancesCount = data.instances.size();
+        nvrhi::rt::AccelStructDesc tlasDesc;
+        tlasDesc.debugName = "TLAS";
+        tlasDesc.isTopLevel = true;
+        tlasDesc.topLevelMaxInstances = maxInstancesCount;
+        data.topLevelAS = data.device->createAccelStruct(tlasDesc);
+        HE_ASSERT(data.topLevelAS);
+    }
 
-        Math::float3 cameraPosition;
-        int padding;
-
-        Math::float2 viewSize;
-        Math::float2 viewSizeInv;
-    };
-
-    struct RendererData
+    // instanceBuffer
     {
-        nvrhi::DeviceHandle device;
-        nvrhi::ShaderLibraryHandle shaderLibrary;
-        nvrhi::BindingLayoutHandle bindingLayout;
-        nvrhi::BindingSetHandle bindingSet;
-        nvrhi::TextureHandle renderTarget;
-        nvrhi::BufferHandle viewBuffer;
-        nvrhi::rt::PipelineHandle pipeline;
-        nvrhi::rt::ShaderTableHandle shaderTable;
-        nvrhi::rt::AccelStructHandle topLevelAS;
-        nvrhi::rt::AccelStructHandle bottomLevelAS;
-    };
+        data.instanceData.resize(newSize);
+        nvrhi::BufferDesc bufferDesc;
+        bufferDesc.byteSize = sizeof(HRay::InstanceData) * data.instanceData.size();
+        bufferDesc.debugName = "Instances";
+        bufferDesc.structStride = sizeof(HRay::InstanceData);
+        bufferDesc.canHaveRawViews = true;
+        bufferDesc.canHaveUAVs = true;
+        bufferDesc.isVertexBuffer = true;
+        bufferDesc.initialState = nvrhi::ResourceStates::ShaderResource;
+        bufferDesc.keepInitialState = true;
+        data.instanceBuffer = data.device->createBuffer(bufferDesc);
+        HE_ASSERT(data.instanceBuffer);
+    }
 
-    void Init(RendererData& data, nvrhi::DeviceHandle pDevice, nvrhi::CommandListHandle commandList)
+    data.bindingSet.Reset();
+}
+
+static void CreateOrResizeMaterialBuffer(HRay::RendererData& data, uint32_t newSize)
+{
+    HE_PROFILE_FUNCTION();
+
+    data.materialData.resize(newSize);
+    nvrhi::BufferDesc bufferDesc;
+    bufferDesc.byteSize = data.materialData.size() * sizeof(HRay::MaterialData);
+    bufferDesc.debugName = "MaterialBuffer";
+    bufferDesc.structStride = sizeof(HRay::MaterialData);
+    bufferDesc.canHaveRawViews = true;
+    bufferDesc.canHaveUAVs = true;
+    bufferDesc.initialState = nvrhi::ResourceStates::ShaderResource;
+    bufferDesc.keepInitialState = true;
+    data.materialBuffer = data.device->createBuffer(bufferDesc);
+
+    data.bindingSet.Reset();
+}
+
+void HRay::Init(RendererData& data, nvrhi::DeviceHandle pDevice, nvrhi::CommandListHandle commandList)
+{
+    HE_PROFILE_FUNCTION();
+
+    data.device = pDevice;
+
+    // Descriptor Table Manager
     {
-        data.device = pDevice;
+        HE_PROFILE_SCOPE("Create Descriptor Table Manager");
 
-        data.shaderLibrary = RHI::CreateShaderLibrary(data.device, STATIC_SHADER(Main), nullptr);
-        HE_VERIFY(data.shaderLibrary);
+        nvrhi::BindlessLayoutDesc bindlessLayoutDesc;
+        bindlessLayoutDesc.visibility = nvrhi::ShaderType::All;
+        bindlessLayoutDesc.firstSlot = 0;
+        bindlessLayoutDesc.maxCapacity = 1024;
+        bindlessLayoutDesc.registerSpaces = {
+            nvrhi::BindingLayoutItem::RawBuffer_SRV(1),
+            nvrhi::BindingLayoutItem::Texture_SRV(2)
+        };
+        data.bindlessLayout = data.device->createBindlessLayout(bindlessLayoutDesc);
+        data.descriptorTable = HE::CreateRef<Assets::DescriptorTableManager>(data.device, data.bindlessLayout);
+    }
+
+    // View Buffer
+    {
+        HE_PROFILE_SCOPE("create View Buffer");
 
         data.viewBuffer = data.device->createBuffer(nvrhi::utils::CreateVolatileConstantBufferDesc(sizeof(ViewBuffer), "ViewBuffer", sizeof(ViewBuffer)));
         HE_VERIFY(data.viewBuffer);
+    }
 
-        nvrhi::BindingLayoutDesc globalBindingLayoutDesc;
-        globalBindingLayoutDesc.visibility = nvrhi::ShaderType::All;
-        globalBindingLayoutDesc.bindings = {
-            { 0, nvrhi::ResourceType::RayTracingAccelStruct },
-            { 0, nvrhi::ResourceType::Texture_UAV },
-            { 0, nvrhi::ResourceType::VolatileConstantBuffer }
+    // Shaders
+    {
+        HE_PROFILE_SCOPE("CreateShaderLibrary");
+
+        data.shaderLibrary = HE::RHI::CreateShaderLibrary(data.device, STATIC_SHADER(Main), nullptr);
+        HE_VERIFY(data.shaderLibrary);
+    }
+
+    // Samplers
+    {
+        HE_PROFILE_SCOPE("create Samplers");
+
+        auto samplerDesc = nvrhi::SamplerDesc()
+            .setAllFilters(false)
+            .setAllAddressModes(nvrhi::SamplerAddressMode::Clamp)
+            .setAllFilters(true)
+            .setAllAddressModes(nvrhi::SamplerAddressMode::Wrap)
+            .setMaxAnisotropy(16);
+        data.anisotropicWrapSampler = data.device->createSampler(samplerDesc);
+        HE_VERIFY(data.anisotropicWrapSampler);
+    }
+
+    // Global Binding Layout
+    {
+        HE_PROFILE_SCOPE("createBindingLayout");
+
+        nvrhi::BindingLayoutDesc desc;
+        desc.visibility = nvrhi::ShaderType::All;
+        desc.bindings = {
+           nvrhi::BindingLayoutItem::RayTracingAccelStruct(0),
+           nvrhi::BindingLayoutItem::StructuredBuffer_SRV(1),
+           nvrhi::BindingLayoutItem::StructuredBuffer_SRV(2),
+           nvrhi::BindingLayoutItem::StructuredBuffer_SRV(3),
+           nvrhi::BindingLayoutItem::Texture_UAV(0),
+           nvrhi::BindingLayoutItem::Sampler(0),
+           nvrhi::BindingLayoutItem::VolatileConstantBuffer(0)
         };
 
-        data.bindingLayout = data.device->createBindingLayout(globalBindingLayoutDesc);
+        data.bindingLayout = data.device->createBindingLayout(desc);
+        HE_ASSERT(data.bindingLayout);
+    }
+
+    // Pipeline
+    {
+        HE_PROFILE_SCOPE("createRayTracingPipeline");
 
         nvrhi::rt::PipelineDesc pipelineDesc;
-        pipelineDesc.globalBindingLayouts = { data.bindingLayout };
+        pipelineDesc.globalBindingLayouts = { data.bindingLayout, data.bindlessLayout };
         pipelineDesc.shaders = {
             { "", data.shaderLibrary->getShader("RayGen", nvrhi::ShaderType::RayGeneration), nullptr },
             { "", data.shaderLibrary->getShader("Miss", nvrhi::ShaderType::Miss), nullptr }
@@ -85,365 +209,317 @@ namespace HRay {
 
         pipelineDesc.maxPayloadSize = sizeof(Math::float4);
         data.pipeline = data.device->createRayTracingPipeline(pipelineDesc);
-        
+        HE_ASSERT(data.pipeline);
+
         data.shaderTable = data.pipeline->createShaderTable();
         data.shaderTable->setRayGenerationShader("RayGen");
-        data.shaderTable->addHitGroup("HitGroup");
         data.shaderTable->addMissShader("Miss");
-        
-        nvrhi::BufferDesc bufferDesc;
-        bufferDesc.byteSize = sizeof(uint32_t) * 3;
-        bufferDesc.initialState = nvrhi::ResourceStates::ShaderResource;
-        bufferDesc.keepInitialState = true;
-        bufferDesc.isAccelStructBuildInput = true;
-        nvrhi::BufferHandle indexBuffer = data.device->createBuffer(bufferDesc);
-        bufferDesc.byteSize = sizeof(Math::float3) * 3;
-        nvrhi::BufferHandle vertexBuffer = data.device->createBuffer(bufferDesc);
-
-        uint32_t indices[3] = { 0, 1, 2 };
-        Math::float3 vertices[3] = { Math::float3(-1, -1, 0), Math::float3(1, -1, 0), Math::float3(0, 1, 0) };
-       
-        commandList->writeBuffer(indexBuffer, indices, sizeof(indices));
-        commandList->writeBuffer(vertexBuffer, vertices, sizeof(vertices));
-
-        nvrhi::rt::AccelStructDesc blasDesc;
-        blasDesc.isTopLevel = false;
-        nvrhi::rt::GeometryDesc geometryDesc;
-        auto& triangles = geometryDesc.geometryData.triangles;
-        triangles.indexBuffer = indexBuffer;
-        triangles.vertexBuffer = vertexBuffer;
-        triangles.indexFormat = nvrhi::Format::R32_UINT;
-        triangles.indexCount = 3;
-        triangles.vertexFormat = nvrhi::Format::RGB32_FLOAT;
-        triangles.vertexStride = sizeof(Math::float3);
-        triangles.vertexCount = 3;
-        geometryDesc.geometryType = nvrhi::rt::GeometryType::Triangles;
-        geometryDesc.flags = nvrhi::rt::GeometryFlags::Opaque;
-        blasDesc.bottomLevelGeometries.push_back(geometryDesc);
-
-        data.bottomLevelAS = data.device->createAccelStruct(blasDesc);
-        nvrhi::utils::BuildBottomLevelAccelStruct(commandList, data.bottomLevelAS, blasDesc);
-
-        nvrhi::rt::AccelStructDesc tlasDesc;
-        tlasDesc.isTopLevel = true;
-        tlasDesc.topLevelMaxInstances = 1;
-
-        data.topLevelAS = data.device->createAccelStruct(tlasDesc);
-
-        nvrhi::rt::InstanceDesc instanceDesc;
-        Math::float4x4 transform = Math::float4x4(1.0f);
-        memcpy(instanceDesc.transform, &transform, sizeof(transform));
-
-        instanceDesc.bottomLevelAS = data.bottomLevelAS;
-        instanceDesc.instanceMask = 1;
-        instanceDesc.flags = nvrhi::rt::InstanceFlags::TriangleFrontCounterclockwise;
-
-        commandList->buildTopLevelAccelStruct(data.topLevelAS, &instanceDesc, 1);
+        data.shaderTable->addHitGroup("HitGroup");
     }
 
-    void CreateResources(RendererData& data, uint32_t width, uint32_t height)
     {
-        data.bindingSet.Reset();
-        data.renderTarget.Reset();
+        HE_PROFILE_SCOPE("Create Resources");
 
-        nvrhi::TextureDesc textureDesc;
-        textureDesc.width = width;
-        textureDesc.height = height;
-        textureDesc.initialState = nvrhi::ResourceStates::UnorderedAccess;
-        textureDesc.format = nvrhi::Format::RGBA8_UNORM;
-        textureDesc.keepInitialState = true;
-        textureDesc.isRenderTarget = false;
-        textureDesc.isUAV = true;
-        data.renderTarget = data.device->createTexture(textureDesc);
+        CreateOrResizeRenderTarget(data, 1920, 1080);
+        CreateOrResizeGeoBuffer(data, 1024);
+        CreateOrResizeInstanceBuffer(data, 1024);
+        CreateOrResizeMaterialBuffer(data, 1024);
+    }
+}
+
+void HRay::BeginScene(RendererData& data)
+{
+    HE_PROFILE_FUNCTION();
+
+    data.geometryCount = 0;
+    data.instanceCount = 0;
+    data.materialCount = 0;
+
+    {
+        data.materials.clear();
+        data.materialData.clear();
+        data.materialData.resize(data.materialData.capacity());
+    }
+    {
+        data.geometryData.clear();
+        data.geometryData.resize(data.geometryData.capacity());
+    }
+    {
+        data.instanceData.clear();
+        data.instanceData.resize(data.instanceData.capacity());
+    }
+    {
+        data.instances.clear();
+        data.instances.resize(data.instances.capacity());
+    }
+}
+
+void HRay::EndScene(RendererData& data, nvrhi::ICommandList* commandList, const ViewDesc& viewDesc)
+{
+    HE_PROFILE_FUNCTION();
+
+    // ViewBuffer
+    {
+        ViewBuffer buffer;
+        buffer.clipToWorld = Math::inverse(viewDesc.projection * viewDesc.view);
+        buffer.cameraPosition = viewDesc.cameraPosition;
+        buffer.viewSize = Math::float2(viewDesc.width, viewDesc.height);
+        buffer.viewSizeInv = 1.0f / buffer.viewSize;
+
+        commandList->writeBuffer(data.viewBuffer, &buffer, sizeof(buffer));
+    }
+
+    if (data.renderTarget && (viewDesc.width != data.renderTarget->getDesc().width || viewDesc.height != data.renderTarget->getDesc().height))
+        CreateOrResizeRenderTarget(data, viewDesc.width, viewDesc.height);
+
+    if (!data.bindingSet)
+    {
+        HE_PROFILE_SCOPE("CreateBindingSet");
 
         nvrhi::BindingSetDesc bindingSetDesc;
         bindingSetDesc.bindings = {
             nvrhi::BindingSetItem::RayTracingAccelStruct(0, data.topLevelAS),
+            nvrhi::BindingSetItem::StructuredBuffer_SRV(1, data.instanceBuffer),
+            nvrhi::BindingSetItem::StructuredBuffer_SRV(2, data.geometryBuffer),
+            nvrhi::BindingSetItem::StructuredBuffer_SRV(3, data.materialBuffer),
             nvrhi::BindingSetItem::Texture_UAV(0, data.renderTarget),
+            nvrhi::BindingSetItem::Sampler(0, data.anisotropicWrapSampler),
             nvrhi::BindingSetItem::ConstantBuffer(0, data.viewBuffer)
         };
 
         data.bindingSet = data.device->createBindingSet(bindingSetDesc, data.bindingLayout);
     }
 
-    void SumbitToGPU(RendererData& data, nvrhi::ICommandList* commandList, Editor::EditorCamera* editorCamera, uint32_t width, uint32_t height)
-    {
-        // ViewBuffer
-        {
-            ViewBuffer buffer;
-            buffer.clipToWorld = editorCamera->transform.ToMat() * Math::inverse(editorCamera->view.projection);
-            buffer.cameraPosition = editorCamera->transform.position;
-            buffer.viewSize = Math::float2(width, height);
-            buffer.viewSizeInv = 1.0f / Math::float2(width, height);
+    commandList->writeBuffer(data.geometryBuffer, data.geometryData.data(), data.geometryCount * sizeof(GeometryData));
+    commandList->writeBuffer(data.instanceBuffer, data.instanceData.data(), data.instanceCount * sizeof(InstanceData));
+    commandList->writeBuffer(data.materialBuffer, data.materialData.data(), data.materialCount * sizeof(MaterialData));
+    commandList->buildTopLevelAccelStruct(data.topLevelAS, data.instances.data(), data.instanceCount, nvrhi::rt::AccelStructBuildFlags::AllowEmptyInstances);
 
-            commandList->writeBuffer(data.viewBuffer, &buffer, sizeof(buffer));
-        }
+    nvrhi::rt::State state;
+    state.shaderTable = data.shaderTable;
+    state.bindings = { data.bindingSet, data.descriptorTable->GetDescriptorTable() };
+    commandList->setRayTracingState(state);
 
-        nvrhi::rt::State state;
-        state.shaderTable = data.shaderTable;
-        state.bindings = { data.bindingSet };
-        commandList->setRayTracingState(state);
-
-        nvrhi::rt::DispatchRaysArguments args;
-        args.width = width;
-        args.height = height;
-        commandList->dispatchRays(args);
-    }
+    nvrhi::rt::DispatchRaysArguments args;
+    args.width = viewDesc.width;
+    args.height = viewDesc.height;
+    commandList->dispatchRays(args);
 }
 
-class HRayApp : public Layer
+void HRay::SubmitMesh(RendererData& data, Assets::Asset asset, Assets::Mesh& mesh, Math::float4x4 wt, nvrhi::ICommandList* cl)
 {
-public:
-    nvrhi::DeviceHandle device;
-    nvrhi::CommandListHandle commandList;
-    nvrhi::TextureHandle icon, close, min, max, res;
+    auto meshSource = mesh.meshSource;
 
-    HRay::RendererData rd;
-
-    Scope<Editor::EditorCamera> editorCamera;
-    int width = 1920, height = 1080;
-    bool enableTitlebar = true;
-    bool enableViewPortWindow = true;
-    bool enableSettingWindow = true;
-    bool useViewportSize = true;
-
-    virtual void OnAttach() override
+    if (!asset.Has<MeshSourceBuffers, MeshSourceDescriptors>())
     {
-        device = RHI::GetDevice();
-        commandList = device->createCommandList();
-
-        Plugins::LoadPluginsInDirectory("Plugins");
-
-        editorCamera = CreateScope<Editor::OrbitCamera>(60.0f, float(width) / float(height), 0.1f, 100.0f);
-
-        commandList->open();
-
-        HRay::Init(rd, device, commandList);
-        HRay::CreateResources(rd, width, height);
-
-        // icons
-        {
-            HE_PROFILE_SCOPE("Load Icons");
-
-            icon = Utils::LoadTexture(Application::GetApplicationDesc().windowDesc.iconFilePath, device, commandList);
-            close = Utils::LoadTexture(Buffer(g_icon_close, sizeof(g_icon_close)), device, commandList);
-            min = Utils::LoadTexture(Buffer(g_icon_minimize, sizeof(g_icon_minimize)), device, commandList);
-            max = Utils::LoadTexture(Buffer(g_icon_maximize, sizeof(g_icon_maximize)), device, commandList);
-            res = Utils::LoadTexture(Buffer(g_icon_restore, sizeof(g_icon_restore)), device, commandList);
-        }
-
-        commandList->close();
-        device->executeCommandList(commandList);
+        asset.Add<MeshSourceBuffers>();
+        asset.Add<MeshSourceDescriptors>();
     }
 
-    virtual void OnUpdate(const FrameInfo& info) override
+    auto& buffers = asset.Get<MeshSourceBuffers>();
+    auto& descriptors = asset.Get<MeshSourceDescriptors>();
+
+    auto& indexBuffer = buffers.indexBuffer;
+    auto& vertexBuffer = buffers.vertexBuffer;
+    auto& indexBufferDescriptor = descriptors.indexBufferDescriptor;
+    auto& vertexBufferDescriptor = descriptors.vertexBufferDescriptor;
+
+    // indexBuffer
+    if (!indexBuffer)
     {
-        // UI
+        HE_PROFILE_SCOPE("Create IndexBuffer");
+
+        nvrhi::BufferDesc bufferDesc;
+        bufferDesc.isIndexBuffer = true;
+        bufferDesc.byteSize = meshSource->cpuIndexBuffer.size() * sizeof(uint32_t);
+        bufferDesc.debugName = "IndexBuffer";
+        bufferDesc.canHaveTypedViews = true;
+        bufferDesc.canHaveRawViews = true;
+        bufferDesc.format = nvrhi::Format::R32_UINT;
+        bufferDesc.isAccelStructBuildInput = true;
+        indexBuffer = data.device->createBuffer(bufferDesc);
+
+        indexBufferDescriptor = data.descriptorTable->CreateDescriptorHandle(nvrhi::BindingSetItem::RawBuffer_SRV(0, indexBuffer));
+        cl->beginTrackingBufferState(indexBuffer, nvrhi::ResourceStates::Common);
+        cl->writeBuffer(indexBuffer, meshSource->cpuIndexBuffer.data(), meshSource->cpuIndexBuffer.size() * sizeof(uint32_t));
+
+        nvrhi::ResourceStates state = nvrhi::ResourceStates::IndexBuffer | nvrhi::ResourceStates::ShaderResource | nvrhi::ResourceStates::AccelStructBuildInput;
+
+        cl->setPermanentBufferState(indexBuffer, state);
+        cl->commitBarriers();
+    }
+
+    // vertexBuffer
+    if (!vertexBuffer)
+    {
+        HE_PROFILE_SCOPE("Create VertexBuffer");
+
+        nvrhi::BufferDesc bufferDesc;
+        bufferDesc.isVertexBuffer = true;
+        bufferDesc.debugName = "VertexBuffer";
+        bufferDesc.canHaveTypedViews = true;
+        bufferDesc.canHaveRawViews = true;
+        bufferDesc.isAccelStructBuildInput = true;
+        bufferDesc.byteSize = meshSource->cpuVertexBuffer.size();
+        vertexBuffer = data.device->createBuffer(bufferDesc);
+
+        vertexBufferDescriptor = data.descriptorTable->CreateDescriptorHandle(nvrhi::BindingSetItem::RawBuffer_SRV(0, vertexBuffer));
+        cl->beginTrackingBufferState(vertexBuffer, nvrhi::ResourceStates::Common);
+        if (meshSource->HasAttribute(Assets::VertexAttribute::Position))
         {
-            HE_PROFILE_SCOPE_NC("UI", 0xFF0000FF);
+            const auto& range = meshSource->getVertexBufferRange(Assets::VertexAttribute::Position);
+            cl->writeBuffer(vertexBuffer, meshSource->GetAttribute<Math::float3>(Assets::VertexAttribute::Position), range.byteSize, range.byteOffset);
+        }
 
-            float dpi = ImGui::GetWindowDpiScale();
-            float scale = ImGui::GetIO().FontGlobalScale * dpi;
-            auto& style = ImGui::GetStyle();
-            style.FrameRounding = Math::max(3.0f * scale, 1.0f);
-            ImGui::ScopedStyle wb(ImGuiStyleVar_WindowBorderSize, 0.0f);
+        if (meshSource->HasAttribute(Assets::VertexAttribute::Normal))
+        {
+            const auto& range = meshSource->getVertexBufferRange(Assets::VertexAttribute::Normal);
+            cl->writeBuffer(vertexBuffer, meshSource->GetAttribute<uint32_t>(Assets::VertexAttribute::Normal), range.byteSize, range.byteOffset);
+        }
 
-            ImGui::DockSpaceOverViewport(ImGui::GetMainViewport()->ID, ImGui::GetMainViewport(), ImGuiDockNodeFlags_PassthruCentralNode | ImGuiDockNodeFlags_AutoHideTabBar);
+        if (meshSource->HasAttribute(Assets::VertexAttribute::Tangent))
+        {
+            const auto& range = meshSource->getVertexBufferRange(Assets::VertexAttribute::Tangent);
+            cl->writeBuffer(vertexBuffer, meshSource->GetAttribute<uint32_t>(Assets::VertexAttribute::Tangent), range.byteSize, range.byteOffset);
+        }
 
-            if (enableTitlebar)
+        if (meshSource->HasAttribute(Assets::VertexAttribute::TexCoord0))
+        {
+            const auto& range = meshSource->getVertexBufferRange(Assets::VertexAttribute::TexCoord0);
+            cl->writeBuffer(vertexBuffer, meshSource->GetAttribute<Math::float2>(Assets::VertexAttribute::TexCoord0), range.byteSize, range.byteOffset);
+        }
+
+        if (meshSource->HasAttribute(Assets::VertexAttribute::TexCoord1))
+        {
+            const auto& range = meshSource->getVertexBufferRange(Assets::VertexAttribute::TexCoord1);
+            cl->writeBuffer(vertexBuffer, meshSource->GetAttribute<Math::float2>(Assets::VertexAttribute::TexCoord1), range.byteSize, range.byteOffset);
+        }
+
+        nvrhi::ResourceStates state = nvrhi::ResourceStates::VertexBuffer | nvrhi::ResourceStates::ShaderResource | nvrhi::ResourceStates::AccelStructBuildInput;
+
+        cl->setPermanentBufferState(vertexBuffer, state);
+        cl->commitBarriers();
+    }
+
+    // BLAS
+    if (!mesh.accelStruct)
+    {
+        HE_PROFILE_SCOPE("Create BLAS");
+
+        nvrhi::rt::AccelStructDesc blasDesc;
+        blasDesc.isTopLevel = false;
+
+        blasDesc.bottomLevelGeometries.reserve(mesh.GetGeometrySpan().size());
+        for (auto& geometry : mesh.GetGeometrySpan())
+        {
+            nvrhi::rt::GeometryDesc& geometryDesc = blasDesc.bottomLevelGeometries.emplace_back();
+            auto& triangles = geometryDesc.geometryData.triangles;
+            triangles.indexBuffer = indexBuffer;
+            triangles.indexOffset = geometry.GetIndexRange().byteOffset;
+            triangles.indexFormat = nvrhi::Format::R32_UINT;
+            triangles.indexCount = geometry.indexCount;
+            triangles.vertexBuffer = vertexBuffer;
+            triangles.vertexOffset = geometry.GetVertexRange(Assets::VertexAttribute::Position).byteOffset;
+            triangles.vertexFormat = nvrhi::Format::RGB32_FLOAT;
+            triangles.vertexStride = Assets::GetVertexAttributeSize(Assets::VertexAttribute::Position);
+            triangles.vertexCount = geometry.vertexCount;
+            geometryDesc.geometryType = nvrhi::rt::GeometryType::Triangles;
+            geometryDesc.flags = nvrhi::rt::GeometryFlags::Opaque;
+        }
+
+        mesh.accelStruct = data.device->createAccelStruct(blasDesc);
+        nvrhi::utils::BuildBottomLevelAccelStruct(cl, mesh.accelStruct, blasDesc);
+    }
+
+    if (data.instanceData.size() <= data.instanceCount)
+        CreateOrResizeInstanceBuffer(data, (uint32_t)data.instanceData.size() * 2);
+
+    // TLAS
+    {
+        nvrhi::rt::InstanceDesc& instanceDesc = data.instances[data.instanceCount];
+
+        HE_ASSERT(mesh.accelStruct);
+        instanceDesc.bottomLevelAS = mesh.accelStruct;
+        instanceDesc.instanceMask = c_instanceMaskOpaque;
+        instanceDesc.instanceID = data.instanceCount;
+        //instanceDesc.instanceContributionToHitGroupIndex = ?; // TODO : What is it?
+
+        Math::float3x4 transform = Math::transpose(wt);
+        std::memcpy(instanceDesc.transform, &transform, sizeof(transform));
+    }
+
+    // InstanceData
+    {
+        InstanceData& idata = data.instanceData[data.instanceCount];
+        idata.transform = wt;
+        idata.firstGeometryIndex = data.geometryCount;
+    }
+
+    // Geometry
+    {
+        for (const auto& geometry : mesh.GetGeometrySpan())
+        {
+            if (data.geometryData.size() <= data.geometryCount)
+                CreateOrResizeGeoBuffer(data, (uint32_t)data.geometryData.size() * 2);
+
+            if (data.materialData.size() <= data.materialCount)
+                CreateOrResizeMaterialBuffer(data, (uint32_t)data.materialData.size() * 2);
+
+            GeometryData& gd = data.geometryData[data.geometryCount];
+            gd.indexBufferIndex = indexBufferDescriptor.IsValid() ? indexBufferDescriptor.Get() : c_Invalid;
+            gd.vertexBufferIndex = vertexBufferDescriptor.IsValid() ? vertexBufferDescriptor.Get() : c_Invalid;
+            gd.indexCount = geometry.indexCount;
+            gd.vertexCount = geometry.vertexCount;
+            gd.indexOffset = (uint32_t)geometry.GetIndexRange().byteOffset;
+            gd.positionOffset = meshSource->HasAttribute(Assets::VertexAttribute::Position) ? (uint32_t)geometry.GetVertexRange(Assets::VertexAttribute::Position).byteOffset : c_Invalid;
+            gd.normalOffset = meshSource->HasAttribute(Assets::VertexAttribute::Normal) ? (uint32_t)geometry.GetVertexRange(Assets::VertexAttribute::Normal).byteOffset : c_Invalid;
+            gd.tangentOffset = meshSource->HasAttribute(Assets::VertexAttribute::Tangent) ? (uint32_t)geometry.GetVertexRange(Assets::VertexAttribute::Tangent).byteOffset : c_Invalid;
+            gd.texCoord0Offset = meshSource->HasAttribute(Assets::VertexAttribute::TexCoord0) ? (uint32_t)geometry.GetVertexRange(Assets::VertexAttribute::TexCoord0).byteOffset : c_Invalid;
+            gd.texCoord1Offset = meshSource->HasAttribute(Assets::VertexAttribute::TexCoord1) ? (uint32_t)geometry.GetVertexRange(Assets::VertexAttribute::TexCoord1).byteOffset : c_Invalid;
+
+            // materials
             {
-                bool customTitlebar = Application::GetApplicationDesc().windowDesc.customTitlebar;
-                bool isIconClicked = Utils::BeginMainMenuBar(customTitlebar, icon.Get(), close.Get(), min.Get(), max.Get(), res.Get());
+                Assets::Material* material = data.am->GetAsset<Assets::Material>(geometry.materailHandle);
+                material = material ? material : &data.defultMaterial;
 
-                if (ImGui::BeginMenu("Edit"))
+                if (material)
                 {
-                    if (ImGui::MenuItem("Restart", "Left Shift + ESC"))
-                        Application::Restart();
-
-                    if (ImGui::MenuItem("Exit", "ESC"))
-                        Application::Shutdown();
-
-                    if (ImGui::MenuItem("Full Screen", "F", Application::GetWindow().IsFullScreen()))
-                        Application::GetWindow().ToggleScreenState();
-
-                    ImGui::EndMenu();
-                }
-
-                if (ImGui::BeginMenu("Window"))
-                {
-                    if (ImGui::MenuItem("Title Bar", "Left Shift + T", enableTitlebar))
-                        enableTitlebar = enableTitlebar ? false : true;
-
-                    if (ImGui::MenuItem("View Port", "Left Shift + 1", enableViewPortWindow))
-                        enableViewPortWindow = enableViewPortWindow ? false : true;
-
-                    if (ImGui::MenuItem("Setting", "Left Shift + 2", enableSettingWindow))
-                        enableSettingWindow = enableSettingWindow ? false : true;
-
-                    ImGui::EndMenu();
-                }
-
-                Utils::EndMainMenuBar();
-            }
-
-            if (enableViewPortWindow)
-            {
-                ImGui::ScopedStyle ss(ImGuiStyleVar_WindowPadding, ImVec2{ 0.0f,0.0f });
-                if (ImGui::Begin("View"))
-                {
-                    auto size = ImGui::GetContentRegionAvail();
-                    uint32_t w = Utils::Align(uint32_t(size.x), 2u);
-                    uint32_t h = Utils::Align(uint32_t(size.y), 2u);
-
-                    if (useViewportSize && (width != w || height != h))
+                    if (!data.materials.contains(geometry.materailHandle))
                     {
-                        width = w;
-                        height = h;
-                        Jops::SubmitToMainThread([this]() { HRay::CreateResources(rd, width, height); });
+                        data.materials[geometry.materailHandle] = data.materialCount;
+                        data.materialCount++;
                     }
 
-                    editorCamera->SetViewportSize(width, height);
-                    editorCamera->OnUpdate(info.ts);
-
-                    ImGui::Image(rd.renderTarget.Get(), ImVec2{ (float)size.x, (float)size.y });
-                }
-                ImGui::End();
-            }
-
-            if (enableSettingWindow)
-            {
-                auto cf = ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding;
-
-                if (ImGui::Begin("Setting", &enableSettingWindow))
-                {
-                    ImGui::ScopedStyle ss(ImGuiStyleVar_WindowPadding, ImVec2(4, 4));
-                    ImGui::ScopedColor sc0(ImGuiCol_Header, ImVec4(0, 0, 0, 0));
-                    ImGui::ScopedColor sc1(ImGuiCol_HeaderHovered, ImVec4(0, 0, 0, 0));
-                    ImGui::ScopedColor sc2(ImGuiCol_HeaderActive, ImVec4(0, 0, 0, 0));
-                    
-                    ImGui::BeginChild("Appliction", { 0,0 }, cf);
-                    if (ImGui::CollapsingHeader("Appliction", ImGuiTreeNodeFlags_::ImGuiTreeNodeFlags_DefaultOpen))
+                    Assets::Texture* texture = data.am->GetAsset<Assets::Texture>(material->baseTextureHandle);
+                    if (texture && texture->texture && !texture->descriptor.IsValid())
                     {
-                        const auto& appStats = Application::GetStats();
-                        ImGui::Text("Graphics API : %s", nvrhi::utils::GraphicsAPIToString(device->getGraphicsAPI()));
-                        ImGui::Text("FPS : %zd", appStats.FPS);
-                        ImGui::Text("CPUMainTime %f ms", appStats.CPUMainTime);
+                        HE_ASSERT(texture->texture);
+                        texture->descriptor = data.descriptorTable->CreateDescriptorHandle(nvrhi::BindingSetItem::Texture_SRV(0, texture->texture));
+                        data.textureCount++;
                     }
-                    ImGui::EndChild();
 
-                    ImGui::BeginChild("Setting", { 0,0 }, cf);
-
-                    if (ImGui::CollapsingHeader("Setting", ImGuiTreeNodeFlags_::ImGuiTreeNodeFlags_DefaultOpen))
-                    {
-                        ImGui::Checkbox("Use ViewPort Size", &useViewportSize);
-                        if (!useViewportSize)
-                        {
-                            if (ImGui::DragInt("Width", &width, 1))
-                            {
-                                width = Utils::Align(uint32_t(width), 2u);
-                                Jops::SubmitToMainThread([this]() { HRay::CreateResources(rd, width, height); });
-                            }
-
-                            if (ImGui::DragInt("Height", &height, 1))
-                            {
-                                height = Utils::Align(uint32_t(height), 2u);
-                                Jops::SubmitToMainThread([this]() { HRay::CreateResources(rd, width, height); });
-                            }
-                        }
-                        else
-                        {
-                            ImGui::Text("Width  : %zd", width);
-                            ImGui::Text("Height : %zd", height);
-                        }
-                    }
-                    ImGui::EndChild();
+                    uint32_t index = data.materials.at(geometry.materailHandle);
+                    auto& mat = data.materialData[index];
+                    mat.baseColor = material->baseColor;
+                    mat.uvSet = (int)material->uvSet;
+                    mat.baseTextureIndex = texture ? texture->descriptor.Get() : c_Invalid;
+                    gd.materialIndex = index;
                 }
-
-                ImGui::End();
-            }
-        }
-
-        {
-            if (Input::IsKeyDown(Key::LeftShift) && Input::IsKeyPressed(Key::Escape))
-                Application::Restart();
-
-            if (Input::IsKeyPressed(Key::Escape))
-                Application::Shutdown();
-
-            if (Input::IsKeyReleased(Key::F))
-                Application::GetWindow().ToggleScreenState();
-
-            if (Input::IsKeyDown(Key::LeftShift) && Input::IsKeyPressed(Key::T))
-                enableTitlebar = enableTitlebar ? false : true;
-
-            if (Input::IsKeyDown(Key::LeftShift) && Input::IsKeyPressed(Key::D1))
-                enableViewPortWindow = enableViewPortWindow ? false : true;
-
-            if (Input::IsKeyDown(Key::LeftShift) && Input::IsKeyPressed(Key::D2))
-                enableSettingWindow = enableSettingWindow ? false : true;
-
-            if (Input::IsKeyDown(Key::LeftShift) && Input::IsKeyReleased(Key::M))
-            {
-                if (!Application::GetWindow().IsMaximize())
-                    Application::GetWindow().MaximizeWindow();
-                else
-                    Application::GetWindow().RestoreWindow();
             }
 
-            if (Input::IsKeyPressed(Key::H))
-            {
-                if (Input::GetCursorMode() == Cursor::Mode::Disabled)
-                    Input::SetCursorMode(Cursor::Mode::Normal);
-                else
-                    Input::SetCursorMode(Cursor::Mode::Disabled);
-            }
-
-
-            if (Input::IsKeyDown(Key::LeftAlt) && Input::IsKeyReleased(Key::D1))
-                editorCamera = CreateScope<Editor::OrbitCamera>(60.0f, float(width) / float(height), 0.01f, 1000.0f);
-
-            if (Input::IsKeyDown(Key::LeftAlt) && Input::IsKeyReleased(Key::D2))
-                editorCamera = CreateScope<Editor::FlyCamera>(60.0f, float(width) / float(height), 0.01f, 1000.0f);
-        }
-
-        {
-            HRay::SumbitToGPU(rd, commandList, editorCamera.get(), width, height);
+            data.geometryCount++;
         }
     }
 
-    virtual void OnBegin(const FrameInfo& info) override
-    {
-        commandList->open();
-        nvrhi::utils::ClearColorAttachment(commandList, info.fb, 0, nvrhi::Color(0.1f));
-    }
-
-    virtual void OnEnd(const FrameInfo& info) override
-    {
-        commandList->close();
-        device->executeCommandList(commandList);
-    }
-};
-
-HE::ApplicationContext* HE::CreateApplication(ApplicationCommandLineArgs args)
-{
-    ApplicationDesc desc;
-
-    desc.deviceDesc.enableRayTracingExtensions = true;
-    desc.deviceDesc.api = {
-        nvrhi::GraphicsAPI::D3D12,
-        nvrhi::GraphicsAPI::VULKAN,
-    };
-
-    desc.windowDesc.title = "HRay";
-    desc.windowDesc.iconFilePath = "Resources/Icons/Hydra.png";
-    desc.windowDesc.customTitlebar = true;
-    desc.windowDesc.minWidth = 960;
-    desc.windowDesc.minHeight = 540;
-
-    ApplicationContext* ctx = new ApplicationContext(desc);
-    Application::PushLayer(new HRayApp());
-
-    return ctx;
+    data.instanceCount++;
 }
 
-#include "HydraEngine/EntryPoint.h"
+void HRay::ReleaseTexture(RendererData& data, Assets::Texture* texture)
+{
+    if (texture->descriptor.IsValid())
+    {
+        data.descriptorTable->ReleaseDescriptor(texture->descriptor.Get());
+        texture->descriptor.Reset();
+        data.textureCount--;
+    }
+}
