@@ -124,7 +124,7 @@ struct HRayApp : public Layer, public Assets::AssetEventCallback
     bool enableApplicationWindow = true;
     bool enableAdvancedMode = false;
     bool enableStartMenu = true;
-    bool showCreateNewProjectPopub = false;
+    bool enableCreateNewProjectPopub = false;
     ImGuiTextFilter textFilter;
 
     std::string projectPath;
@@ -153,8 +153,6 @@ struct HRayApp : public Layer, public Assets::AssetEventCallback
         {
             auto args = Application::GetApplicationDesc().commandLineArgs;
             project.projectFilePath = args.count == 2 ? args[1] : "";
-          
-            
 
             appData = FileSystem::GetAppDataPath(c_AppName);
             keyBindingsFilePath = std::filesystem::current_path() / "Resources" / "keyBindings.json";
@@ -235,9 +233,6 @@ struct HRayApp : public Layer, public Assets::AssetEventCallback
     {
         HE_PROFILE_FUNCTION();
 
-        if(!assetManager.IsAssetHandleValid(sceneHandle))
-            sceneHandle = assetManager.CreateAsset("main.scene").GetHandle();
-
         for (int i = 0; i < e.count; i++)
         {
             std::filesystem::path file = e.paths[i];
@@ -262,11 +257,11 @@ struct HRayApp : public Layer, public Assets::AssetEventCallback
         case Assets::AssetType::MeshSource:
 
             auto& meshSource = asset.Get<Assets::MeshSource>();
-            Assets::Scene* scene = assetManager.GetAsset<Assets::Scene>(sceneHandle);
 
             if (importing)
             {
                 auto& hierarchy = asset.Get<Assets::MeshSourecHierarchy>();
+                Assets::Scene* scene = assetManager.GetAsset<Assets::Scene>(sceneHandle);
                 Editor::ImportMeshSource(scene, scene->GetRootEntity(), hierarchy.root, asset);
                 importing = false;
             }
@@ -293,6 +288,8 @@ struct HRayApp : public Layer, public Assets::AssetEventCallback
     void OnUpdate(const FrameInfo& info) override
     {
         HE_PROFILE_FUNCTION();
+
+        bool validProject = std::filesystem::exists(project.projectFilePath);
 
         {
             HE_PROFILE_SCOPE("Render");
@@ -327,88 +324,98 @@ struct HRayApp : public Layer, public Assets::AssetEventCallback
         {
             HE_PROFILE_SCOPE("Shortcuts");
 
-            if (Input::Triggered("Restart"))
-                Application::Restart();
-
-            if (Input::Triggered("Shutdown"))
-                Application::Shutdown();
-
-            if (Input::Triggered("ToggleScreenState"))
-                Application::GetWindow().ToggleScreenState();
-
-            if (Input::Triggered("ToggleWindowState"))
+            // App
             {
-                if (!Application::GetWindow().IsMaximize())
-                    Application::GetWindow().Maximize();
-                else
-                    Application::GetWindow().Restore();
+                if (Input::Triggered("Restart"))
+                    Application::Restart();
+
+                if (Input::Triggered("Shutdown"))
+                    Application::Shutdown();
+
+                if (Input::Triggered("ToggleScreenState"))
+                    Application::GetWindow().ToggleScreenState();
+
+                if (Input::Triggered("ToggleWindowState"))
+                {
+                    if (!Application::GetWindow().IsMaximize())
+                        Application::GetWindow().Maximize();
+                    else
+                        Application::GetWindow().Restore();
+                }
+
+                if (Input::Triggered("ToggleCursorState"))
+                {
+                    if (Input::GetCursorMode() == Cursor::Mode::Disabled)
+                        Input::SetCursorMode(Cursor::Mode::Normal);
+                    else
+                        Input::SetCursorMode(Cursor::Mode::Disabled);
+                }
             }
 
-            if (Input::Triggered("ToggleCursorState"))
+            // Windows
             {
-                if (Input::GetCursorMode() == Cursor::Mode::Disabled)
-                    Input::SetCursorMode(Cursor::Mode::Normal);
-                else
-                    Input::SetCursorMode(Cursor::Mode::Disabled);
+                if (Input::IsKeyDown(Key::LeftShift) && Input::IsKeyPressed(Key::T))
+                    enableTitlebar = enableTitlebar ? false : true;
+
+                if (Input::IsKeyDown(Key::LeftShift) && Input::IsKeyPressed(Key::D1))
+                    enableViewPortWindow = enableViewPortWindow ? false : true;
+
+                if (Input::IsKeyDown(Key::LeftShift) && Input::IsKeyPressed(Key::D2))
+                    enableHierarchyWindow = enableHierarchyWindow ? false : true;
+
+                if (Input::IsKeyDown(Key::LeftShift) && Input::IsKeyPressed(Key::D3))
+                    enableInspectorWindow = enableInspectorWindow ? false : true;
+
+                if (enableAdvancedMode)
+                {
+                    if (Input::IsKeyDown(Key::LeftShift) && Input::IsKeyPressed(Key::D4))
+                        enableAssetManagerWindow = enableAssetManagerWindow ? false : true;
+
+                    if (Input::IsKeyDown(Key::LeftShift) && Input::IsKeyPressed(Key::D5))
+                        enableApplicationWindow = enableApplicationWindow ? false : true;
+                }
+
+                if (Input::IsKeyDown(Key::LeftShift) && Input::IsKeyPressed(Key::D0))
+                    enableAdvancedMode = enableAdvancedMode ? false : true;
             }
 
-            if (Input::IsKeyDown(Key::LeftShift) && Input::IsKeyPressed(Key::T))
-                enableTitlebar = enableTitlebar ? false : true;
-
-            if (Input::IsKeyDown(Key::LeftShift) && Input::IsKeyPressed(Key::D1))
-                enableViewPortWindow = enableViewPortWindow ? false : true;
-
-            if (Input::IsKeyDown(Key::LeftShift) && Input::IsKeyPressed(Key::D2))
-                enableHierarchyWindow = enableHierarchyWindow ? false : true;
-
-            if (Input::IsKeyDown(Key::LeftShift) && Input::IsKeyPressed(Key::D3))
-                enableInspectorWindow = enableInspectorWindow ? false : true;
-
-            if (enableAdvancedMode)
+            // Scene
             {
-                if (Input::IsKeyDown(Key::LeftShift) && Input::IsKeyPressed(Key::D4))
-                    enableAssetManagerWindow = enableAssetManagerWindow ? false : true;
+                if (validProject)
+                {
+                    if (Input::IsKeyDown(Key::LeftControl) && Input::IsKeyPressed(Key::I))
+                        OpenScene();
 
-                if (Input::IsKeyDown(Key::LeftShift) && Input::IsKeyPressed(Key::D5))
-                    enableApplicationWindow = enableApplicationWindow ? false : true;
+                    if (Input::IsKeyDown(Key::LeftControl) && Input::IsKeyPressed(Key::N))
+                        NewScene();
+
+                    if (Input::IsKeyDown(Key::LeftControl) && Input::IsKeyPressed(Key::S))
+                        assetManager.SaveAsset(sceneHandle);
+
+                    if (Input::IsKeyDown(Key::LeftAlt) && Input::IsKeyPressed(Key::D1))
+                        SetOrbitCamera();
+
+                    if (Input::IsKeyDown(Key::LeftAlt) && Input::IsKeyPressed(Key::D2))
+                        SetFlyCamera();
+
+                    if (Input::IsKeyDown(Key::LeftControl) && Input::IsKeyReleased(Key::F))
+                        FocusCamera();
+
+                    if (Input::IsKeyReleased(Key::Delete))
+                    {
+                        Assets::Scene* scene = assetManager.GetAsset<Assets::Scene>(sceneHandle);
+                        if (scene) scene->DestroyEntity(selectedEntity);
+                    }
+                }
             }
 
-            if (Input::IsKeyDown(Key::LeftShift) && Input::IsKeyPressed(Key::D0))
-                enableAdvancedMode = enableAdvancedMode ? false : true;
+            if (Input::IsKeyDown(Key::LeftShift) && Input::IsKeyPressed(Key::N))
+                enableCreateNewProjectPopub = true;
 
-            if (Input::IsKeyDown(Key::LeftAlt) && Input::IsKeyPressed(Key::D1))
-                SetOrbitCamera();
-
-            if (Input::IsKeyDown(Key::LeftAlt) && Input::IsKeyPressed(Key::D2))
-                SetFlyCamera();
-
-            if (Input::IsKeyDown(Key::LeftControl) && Input::IsKeyReleased(Key::F))
-                FocusCamera();
-
-            if (Input::IsKeyDown(Key::LeftControl) && Input::IsKeyPressed(Key::S))
-            {
-                assetManager.SaveAsset(sceneHandle);
-            }
-
-            if (Input::IsKeyReleased(Key::Delete))
-            {
-                Assets::Scene* scene = assetManager.GetAsset<Assets::Scene>(sceneHandle);
-                if (scene) scene->DestroyEntity(selectedEntity);
-            }
-
-            if (Input::IsKeyDown(Key::LeftControl) && Input::IsKeyPressed(Key::N)/* && installedInstances > 0*/)
-                showCreateNewProjectPopub = true;
-
-            if (Input::IsKeyDown(Key::LeftControl) && Input::IsKeyPressed(Key::O))
+            if (Input::IsKeyDown(Key::LeftShift) && Input::IsKeyPressed(Key::O))
             {
                 auto file = FileDialog::OpenFile({ { "hray", "hray" } });
                 OpenProject(file);
-            }
-
-            if (Input::IsKeyDown(Key::LeftControl) && Input::IsKeyPressed(Key::I))
-            {
-                auto file = FileDialog::OpenFile({ { "model", "glb" } });
-                ImportModel(file);
             }
         }
 
@@ -495,10 +502,10 @@ struct HRayApp : public Layer, public Assets::AssetEventCallback
 
                 if (ImGui::BeginMenu("File"))
                 {
-                    if (ImGui::MenuItem("   New Project", "Shift + N"))
-                        showCreateNewProjectPopub = true;
+                    if (ImGui::MenuItem("New Project", "Shift + N"))
+                        enableCreateNewProjectPopub = true;
 
-                    if (ImGui::MenuItem("   Open Project", "Shift + O"))
+                    if (ImGui::MenuItem("Open Project", "Shift + O"))
                     {
                         auto file = FileDialog::OpenFile({ { "hray", "hray" } });
                         OpenProject(file);
@@ -506,15 +513,15 @@ struct HRayApp : public Layer, public Assets::AssetEventCallback
 
                     ImGui::Separator();
 
-                    if (ImGui::MenuItem("   New Scene", "Ctrl + N"))
+                    if (ImGui::MenuItem("New Scene", "Ctrl + N", nullptr, validProject))
                         NewScene();
 
-                    if (ImGui::MenuItem("   Open Scene", "Ctr + O"))
+                    if (ImGui::MenuItem("Open Scene", "Ctr + O", nullptr, validProject))
                         OpenScene();
 
                     ImGui::Separator();
 
-                    if (ImGui::MenuItem("   Import", "Ctr + I"))
+                    if (ImGui::MenuItem("Import", "Ctr + I", nullptr, validProject))
                     {
                         auto file = FileDialog::OpenFile({ { "model", "glb" } });
                         ImportModel(file);
@@ -587,10 +594,9 @@ struct HRayApp : public Layer, public Assets::AssetEventCallback
                         ImGui::ScopedFont sf(FontType::Blod, FontSize::Header1);
                         ImGui::ScopedColor  sc(ImGuiCol_Text, ImVec4(0.2f, 0.3f, 0.8f, 1.0f));
 
-                        //ImGui::ShiftCursorX((ImGui::GetContentRegionAvail().x - ImGui::CalcTextSize(m).x) / 2);
                         ImGui::ShiftCursor((ImGui::GetContentRegionAvail() - ImGui::CalcTextSize(m)) / 2);
                         if (ImGui::TextButton(m))
-                            showCreateNewProjectPopub = true;
+                            enableCreateNewProjectPopub = true;
 
                         ImGui::ShiftCursorX((ImGui::GetContentRegionAvail().x - ImGui::CalcTextSize(m1).x) / 2);
                         if (ImGui::TextButton(m1))
@@ -602,7 +608,7 @@ struct HRayApp : public Layer, public Assets::AssetEventCallback
                     ImGui::End();
                 }
 
-                if (showCreateNewProjectPopub)
+                if (enableCreateNewProjectPopub)
                 {
                     ImGui::SetNextWindowBgAlpha(0.8f);
                     const ImGuiViewport* viewport = ImGui::GetMainViewport();
@@ -622,7 +628,7 @@ struct HRayApp : public Layer, public Assets::AssetEventCallback
                         ImGui::Begin("CreateNewProject", nullptr, fullScreenWinFlags);
 
                         if (!ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows))
-                            showCreateNewProjectPopub = false;
+                            enableCreateNewProjectPopub = false;
 
                         {
                             ImGui::ScopedStyle swp(ImGuiStyleVar_WindowPadding, ImVec2(8, 8) * scale);
@@ -682,13 +688,13 @@ struct HRayApp : public Layer, public Assets::AssetEventCallback
                                     if (ImGui::Button("Create Project", { -1,0 }))
                                     {
                                         CreateNewProject(projectPath, projectName);
-                                        showCreateNewProjectPopub = false;
+                                        enableCreateNewProjectPopub = false;
                                     }
                                 }
 
                                 if (ImGui::Button("Cancel", { -1,0 }))
                                 {
-                                    showCreateNewProjectPopub = false;
+                                    enableCreateNewProjectPopub = false;
                                 }
                             }
 
@@ -751,7 +757,7 @@ struct HRayApp : public Layer, public Assets::AssetEventCallback
                                 Math::float4x4 entityWorldSpaceTransform = selectedEntity.GetWorldSpaceTransformMatrix();
 
                                 bool snap = Input::IsKeyDown(Key::LeftControl);
-                                float snapValue = 0.5f; // Snap to 0.5m for translation/scale
+                                float snapValue = 0.5f;
 
                                 if (gizmoType == ImGuizmo::OPERATION::ROTATE)
                                     snapValue = 45.0f;
