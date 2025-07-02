@@ -52,7 +52,10 @@ export namespace HRay {
     struct MaterialData
     {
         Math::float4 baseColor;
+        Math::float3 emissiveColor;
+
         uint32_t baseTextureIndex;
+        uint32_t emissiveTextureIndex;
 
         int uvSet;
         int padding0;

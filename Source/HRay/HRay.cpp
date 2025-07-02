@@ -12,6 +12,7 @@ import HRay;
 import nvrhi;
 import HE;
 import Assets;
+import std;
 
 struct MeshSourceBuffers
 {
@@ -24,6 +25,28 @@ struct MeshSourceDescriptors
     Assets::DescriptorHandle indexBufferDescriptor;
     Assets::DescriptorHandle vertexBufferDescriptor;
 };
+
+// Reference: https://github.com/google/filament/blob/b15ae15f39181e1a16fe248bd022fe4c36eab6de/filament/src/Exposure.cpp#L150
+static float Luminance(float const ev100) noexcept 
+{
+    // With L the average scene luminance, S the sensitivity and K the
+    // reflected-light meter calibration constant:
+    //
+    // EV = log2(L * S / K)
+    // L = 2^EV100 * K / 100
+    //
+    // As in ev100FromLuminance(luminance), we use K = 12.5 to match common camera
+    // manufacturers (Canon, Nikon and Sekonic):
+    //
+    // L = 2^EV100 * 12.5 / 100 = 2^EV100 * 0.125
+    //
+    // With log2(0.125) = -3 we have:
+    //
+    // L = 2^(EV100 - 3)
+    //
+    // Reference: https://en.wikipedia.org/wiki/Exposure_value
+    return std::pow(2.0f, ev100 - 3.0f);
+}
 
 static void CreateOrResizeRenderTarget(HRay::RendererData& data, uint32_t width, uint32_t height)
 {
@@ -207,9 +230,9 @@ void HRay::Init(RendererData& data, nvrhi::DeviceHandle pDevice, nvrhi::CommandL
             false
         } };
 
-        pipelineDesc.maxPayloadSize = sizeof(Math::float4);
+        pipelineDesc.maxPayloadSize = sizeof(Math::float4) + sizeof(Math::float3) * 2 + sizeof(float);
         data.pipeline = data.device->createRayTracingPipeline(pipelineDesc);
-        HE_ASSERT(data.pipeline);
+        HE_VERIFY(data.pipeline);
 
         data.shaderTable = data.pipeline->createShaderTable();
         data.shaderTable->setRayGenerationShader("RayGen");
@@ -490,19 +513,35 @@ void HRay::SubmitMesh(RendererData& data, Assets::Asset asset, Assets::Mesh& mes
                         data.materialCount++;
                     }
 
-                    Assets::Texture* texture = data.am->GetAsset<Assets::Texture>(material->baseTextureHandle);
-                    if (texture && texture->texture && !texture->descriptor.IsValid())
+                    Assets::Texture* baseTexture = data.am->GetAsset<Assets::Texture>(material->baseTextureHandle);
+                    if (baseTexture && baseTexture->texture && !baseTexture->descriptor.IsValid())
                     {
-                        HE_ASSERT(texture->texture);
-                        texture->descriptor = data.descriptorTable->CreateDescriptorHandle(nvrhi::BindingSetItem::Texture_SRV(0, texture->texture));
+                        HE_ASSERT(baseTexture->texture);
+                        baseTexture->descriptor = data.descriptorTable->CreateDescriptorHandle(nvrhi::BindingSetItem::Texture_SRV(0, baseTexture->texture));
+                        data.textureCount++;
+                    }
+
+                    Assets::Texture* emissiveTexture = data.am->GetAsset<Assets::Texture>(material->emissiveTextureHandle);
+                    if (emissiveTexture && emissiveTexture->texture && !emissiveTexture->descriptor.IsValid())
+                    {
+                        HE_ASSERT(emissiveTexture->texture);
+                        emissiveTexture->descriptor = data.descriptorTable->CreateDescriptorHandle(nvrhi::BindingSetItem::Texture_SRV(0, emissiveTexture->texture));
                         data.textureCount++;
                     }
 
                     uint32_t index = data.materials.at(geometry.materailHandle);
                     auto& mat = data.materialData[index];
                     mat.baseColor = material->baseColor;
+
+                    Math::float3 emissive = Math::convertSRGBToLinear(material->emissiveColor);
+                    emissive *= Luminance(material->emissiveEV);
+                    mat.emissiveColor = emissive;
+                    
                     mat.uvSet = (int)material->uvSet;
-                    mat.baseTextureIndex = texture ? texture->descriptor.Get() : c_Invalid;
+                    
+                    mat.baseTextureIndex     = baseTexture     ? baseTexture->descriptor.Get()     : c_Invalid;
+                    mat.emissiveTextureIndex = emissiveTexture ? emissiveTexture->descriptor.Get() : c_Invalid;
+                    
                     gd.materialIndex = index;
                 }
             }

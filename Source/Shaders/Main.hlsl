@@ -37,9 +37,12 @@ struct InstanceData
 
 struct Material
 {
-    float4  baseColor;
+    float4 baseColor;
+    float3 emissiveColor;
 
     int baseTextureIndex;
+    int emissiveTextureIndex;
+
     int uvSet;
     int padding0;
     int padding1;
@@ -61,7 +64,10 @@ typedef BuiltInTriangleIntersectionAttributes HitAttributes;
 
 struct HitInfo
 {
-    float4 color : SHADED_COLOR_AND_HIT_T;
+    float4 color;            // rgb = surface color, a = continueBounce? (1 = yes, 0 = stop)
+    float3 emissiveColor;
+    float dist;              // distance to hit point
+    float3 normal;
 };
 
 struct GeometrySample
@@ -74,6 +80,10 @@ struct GeometrySample
     float3 geometryNormal;
     float2 texcoord;
 };
+
+static const float c_RayPosNormalOffset = 0.01;
+static const float c_PI = 3.14159265;
+static const float c_2PI = 2.0f * c_PI;
 
 GeometrySample SampleGeometry(
     uint instanceIndex,
@@ -170,48 +180,105 @@ RayDesc CreatePrimaryRay(float2 id, float4x4 clipToWorld, float3 cameraPosition,
     return ray;
 }
 
+uint wang_hash(inout uint seed)
+{
+    seed = uint(seed ^ uint(61)) ^ uint(seed >> uint(16));
+    seed *= uint(9);
+    seed = seed ^ (seed >> 4);
+    seed *= uint(0x27d4eb2d);
+    seed = seed ^ (seed >> 15);
+    return seed;
+}
+ 
+float RandomFloat01(inout uint state)
+{
+    return float(wang_hash(state)) / 4294967296.0;
+}
+ 
+float3 RandomUnitVector(inout uint state)
+{
+    float z = RandomFloat01(state) * 2.0f - 1.0f;
+    float a = RandomFloat01(state) * c_2PI;
+    float r = sqrt(1.0f - z * z);
+    float x = r * cos(a);
+    float y = r * sin(a);
+    return float3(x, y, z);
+}
+
 [shader("raygeneration")]
 void RayGen()
 {
     uint2 rayIndex = DispatchRaysIndex().xy;
-    RayDesc ray = CreatePrimaryRay(rayIndex, viewBuffer.clipToWorld, viewBuffer.cameraPosition, viewBuffer.viewSizeInv);
+    uint rngState = uint(uint(rayIndex.x) * uint(1973) + uint(rayIndex.y) * uint(9277)) | uint(1);//+ uint(iFrame) * uint(26699)) | uint(1);
+    RayDesc primaryRay = CreatePrimaryRay(float2(rayIndex), viewBuffer.clipToWorld, viewBuffer.cameraPosition, viewBuffer.viewSizeInv);
 
-    HitInfo payload;
-    payload.color = float4(0, 0, 0, 0);
+    float3 rayOrigin = primaryRay.Origin;
+    float3 rayDirection = primaryRay.Direction;
 
-    TraceRay(TLAS, RAY_FLAG_NONE, 0xFF, 0, 0, 0, ray, payload);
+    float3 resultColor = float3(0, 0, 0);
+    float3 throughput = float3(1, 1, 1);
 
-    renderTarget[rayIndex] = float4(payload.color.rgb, 1.f);
+    const uint MAX_BOUNCES = 8;
+
+    for (uint bounce = 0; bounce < MAX_BOUNCES; ++bounce)
+    {
+        RayDesc ray;
+        ray.Origin    = rayOrigin;
+        ray.Direction = rayDirection;
+        ray.TMin      = 0.001f;
+        ray.TMax      = 1000.0f;
+    
+        HitInfo payload;
+        payload.color  = float4(0, 0, 0, 0);
+        payload.normal = float3(0, 1, 0);
+    
+        TraceRay(TLAS, RAY_FLAG_NONE, 0xFF, 0, 0, 0, ray, payload);
+    
+        if (payload.color.a < 0.5f)  break; // use alpha to stop bouncing
+        
+        rayOrigin    = (rayOrigin + rayDirection * payload.dist) + payload.normal * c_RayPosNormalOffset;
+        rayDirection = normalize(payload.normal + RandomUnitVector(rngState));                            // calculate new ray direction, in a cosine weighted hemisphere oriented at normal
+        resultColor += payload.emissiveColor.rgb * throughput;                                            // add in emissive lighting
+        throughput  *= payload.color.rgb;                                                                 // update the colorMultiplier   
+    }
+
+    renderTarget[rayIndex] = float4(resultColor, 1.0f);
 }
-float3 SRGBToLinear(float3 c)
-{
-    float3 low = c / 12.92;
-    float3 high = pow((c + 0.055) / 1.055, 2.4);
-    return lerp(low, high, step(0.04045, c));
-}
-
 
 [shader("closesthit")]
 void ClosestHit(inout HitInfo payload : SV_RayPayload, HitAttributes attr : SV_IntersectionAttributes)
 {
-    uint instanceID = InstanceID();
+    uint instanceID     = InstanceID();
     uint primitiveIndex = PrimitiveIndex();
-    uint geometryIndex = GeometryIndex();
+    uint geometryIndex  = GeometryIndex();
 
     GeometrySample gs = SampleGeometry(instanceID, primitiveIndex, geometryIndex, attr.barycentrics);
     
     float4 baseColor = gs.material.baseColor;
     if (gs.material.baseTextureIndex != c_Invalid)
     {
-        Texture2D baseTexture = bindlessTextures[NonUniformResourceIndex(gs.material.baseTextureIndex)];
-        baseColor *= baseTexture.SampleLevel(materialSampler, gs.texcoord, 0);
+        Texture2D texture = bindlessTextures[NonUniformResourceIndex(gs.material.baseTextureIndex)];
+        baseColor        *= texture.SampleLevel(materialSampler, gs.texcoord, 0);
     }
-    payload.color = baseColor;
-    //payload.color = float4(gs.flatNormal, 1);
+
+    float3 emissiveColor = gs.material.emissiveColor;
+    if (gs.material.emissiveTextureIndex != c_Invalid)
+    {
+        Texture2D texture = bindlessTextures[NonUniformResourceIndex(gs.material.emissiveTextureIndex)];
+        emissiveColor    *= texture.SampleLevel(materialSampler, gs.texcoord, 0).rgb;
+    }
+
+    payload.color         = float4(baseColor.rgb, 1); // a = 1 → keep bouncing
+    payload.normal        = gs.geometryNormal;
+    payload.emissiveColor = emissiveColor.rgb;
+    payload.dist          = RayTCurrent();
 }
 
 [shader("miss")]
 void Miss(inout HitInfo payload : SV_RayPayload)
 {
-    payload.color = float4(0.1f, 0.1f, 0.1f, 1.0f);
+    payload.color         = float4(0.1f, 0.1f, 0.1f, 1.0f);   // a = 0 → no more bounce
+    payload.normal        = float3(0, 0, 0);                  // dummy
+    payload.emissiveColor = float3(0.5, 0.5, 0.5);
+    payload.dist          = 100000;
 }

@@ -1012,6 +1012,40 @@ struct HRayApp : public Layer, public Assets::AssetEventCallback
                         }
                     }
                     ImField::EndBlock();
+
+
+                    if (ImField::BeginBlock("Material Component", Icon_Mesh, meshColor))
+                    {
+                        auto& dm = selectedEntity.GetComponent<Assets::MeshComponent>();
+                        auto ms = assetManager.GetAsset<Assets::MeshSource>(dm.meshSourceHandle);
+                        auto& mesh = ms->meshes[dm.meshIndex];
+                        
+                        //if (ImGui::BeginTable("Material Component", 2, ImGuiTableFlags_SizingFixedFit))
+                        {
+                            int i = 0;
+                            for (auto& geo : mesh.GetGeometrySpan())
+                            {
+                                ImGui::ScopedID sid(i);
+
+                                {
+                                    auto mat = assetManager.GetAsset<Assets::Material>(geo.materailHandle);
+                                    if (mat)
+                                    {
+                                        //ImField::Field("Bace Color");
+                                        ImGui::ColorEdit4("Bace Color", &mat->baseColor.x);
+                                        ImGui::ColorEdit4("Emissive Color", &mat->emissiveColor.x);
+                                        ImGui::DragFloat("Emissive Exposure", &mat->emissiveEV);
+                                    }
+
+                                    //ImGui::TreePop();
+                                }
+                                i++;
+                            }
+
+                            //ImGui::EndTable();
+                        }
+                    }
+                    ImField::EndBlock();
                 }
             }
         }
