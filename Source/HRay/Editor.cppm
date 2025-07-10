@@ -484,4 +484,275 @@ export namespace Editor {
             ImportMeshSource(scene, newEntity, node, asset);
         }
     }
+
+    struct EntityFactory
+    {
+        std::unordered_map<std::string, std::function<Assets::Entity(Assets::Scene*, Assets::UUID)>> createEnityMapFucntions;
+        Assets::AssetManager* am;
+
+        void Init(Assets::AssetManager* assetManager)
+        {
+            am = assetManager;
+
+            auto Empty = [this](Assets::Scene* scene, Assets::UUID parent) -> Assets::Entity {
+
+                std::string name = GetIncrementedReletiveEntityName(scene, "Empty", scene->FindEntity(parent));
+                Assets::Entity newEntity = scene->CreateEntity(name, parent);
+
+                return newEntity;
+            };
+
+            auto PlaneMesh = [this](Assets::Scene* scene, Assets::UUID parent) -> Assets::Entity {
+
+                std::string name = GetIncrementedReletiveEntityName(scene, "Plane", scene->FindEntity(parent));
+                Assets::Entity newEntity = scene->CreateEntity(name, parent);
+
+                std::filesystem::path meshDirectory = std::filesystem::current_path() / "Resources" / "Meshes";
+                Assets::AssetHandle handle = am->GetOrMakeAsset(meshDirectory / "Plane.glb", "Editor/Meshes/Plane.glb");
+
+                auto& dm = newEntity.AddComponent<Assets::MeshComponent>(handle, 0);
+
+                return newEntity;
+            };
+
+            auto CubeMesh = [this](Assets::Scene* scene, Assets::UUID parent) -> Assets::Entity {
+
+                std::string name = GetIncrementedReletiveEntityName(scene, "Cube", scene->FindEntity(parent));
+                Assets::Entity newEntity = scene->CreateEntity(name, parent);
+
+                std::filesystem::path meshDirectory = std::filesystem::current_path() / "Resources" / "Meshes";
+                Assets::AssetHandle handle = am->GetOrMakeAsset(meshDirectory / "Cube.glb", "Editor/Meshes/Cube.glb");
+
+                auto& dm = newEntity.AddComponent<Assets::MeshComponent>(handle, 0);
+
+                return newEntity;
+            };
+
+            auto CapsuleMesh = [this](Assets::Scene* scene, Assets::UUID parent) -> Assets::Entity {
+
+                std::string name = GetIncrementedReletiveEntityName(scene, "Capsule", scene->FindEntity(parent));
+                Assets::Entity newEntity = scene->CreateEntity(name, parent);
+
+                std::filesystem::path meshDirectory = std::filesystem::current_path() / "Resources" / "Meshes";
+                Assets::AssetHandle handle = am->GetOrMakeAsset(meshDirectory / "Capsule.glb", "Editor/Meshes/Capsule.glb");
+
+                auto& dm = newEntity.AddComponent<Assets::MeshComponent>(handle, 0);
+                
+                return newEntity;
+            };
+
+            auto UVSphereMesh = [this](Assets::Scene* scene, Assets::UUID parent) -> Assets::Entity {
+
+                std::string name = GetIncrementedReletiveEntityName(scene, "UVSphere", scene->FindEntity(parent));
+                Assets::Entity newEntity = scene->CreateEntity(name, parent);
+
+                std::filesystem::path meshDirectory = std::filesystem::current_path() / "Resources" / "Meshes";
+                Assets::AssetHandle handle = am->GetOrMakeAsset(meshDirectory / "UVSphere.glb", "Editor/Meshes/UVSphere.glb");
+
+                auto& dm = newEntity.AddComponent<Assets::MeshComponent>(handle, 0);
+
+                return newEntity;
+            };
+
+            auto IcoSphereMesh = [this](Assets::Scene* scene, Assets::UUID parent) -> Assets::Entity {
+
+                std::string name = GetIncrementedReletiveEntityName(scene, "IcoSphere", scene->FindEntity(parent));
+                Assets::Entity newEntity = scene->CreateEntity(name, parent);
+
+                std::filesystem::path meshDirectory = std::filesystem::current_path() / "Resources" / "Meshes";
+                Assets::AssetHandle handle = am->GetOrMakeAsset(meshDirectory / "IcoSphere.glb", "Editor/Meshes/IcoSphere.glb");
+
+                auto& dm = newEntity.AddComponent<Assets::MeshComponent>(handle, 0);
+
+                return newEntity;
+            };
+
+            auto CylinderMesh = [this](Assets::Scene* scene, Assets::UUID parent) -> Assets::Entity {
+
+                std::string name = GetIncrementedReletiveEntityName(scene, "Cylinder", scene->FindEntity(parent));
+                Assets::Entity newEntity = scene->CreateEntity(name, parent);
+
+                std::filesystem::path meshDirectory = std::filesystem::current_path() / "Resources" / "Meshes";
+                Assets::AssetHandle handle = am->GetOrMakeAsset(meshDirectory / "Cylinder.glb", "Editor/Meshes/Cylinder.glb");
+
+                auto& dm = newEntity.AddComponent<Assets::MeshComponent>(handle, 0);
+
+                return newEntity;
+            };
+
+            auto ConeMesh = [this](Assets::Scene* scene, Assets::UUID parent) -> Assets::Entity {
+
+                std::string name = GetIncrementedReletiveEntityName(scene, "Cone", scene->FindEntity(parent));
+                Assets::Entity newEntity = scene->CreateEntity(name, parent);
+
+                std::filesystem::path meshDirectory = std::filesystem::current_path() / "Resources" / "Meshes";
+                Assets::AssetHandle handle = am->GetOrMakeAsset(meshDirectory / "Cone.glb", "Editor/Meshes/Cone.glb");
+
+                auto& dm = newEntity.AddComponent<Assets::MeshComponent>(handle, 0);
+
+                return newEntity;
+            };
+
+            auto TorusMesh = [this](Assets::Scene* scene, Assets::UUID parent) -> Assets::Entity {
+
+                std::string name = GetIncrementedReletiveEntityName(scene, "Torus", scene->FindEntity(parent));
+                Assets::Entity newEntity = scene->CreateEntity(name, parent);
+
+                std::filesystem::path meshDirectory = std::filesystem::current_path() / "Resources" / "Meshes";
+                Assets::AssetHandle handle = am->GetOrMakeAsset(meshDirectory / "Torus.glb", "Editor/Meshes/Torus.glb");
+
+                auto& dm = newEntity.AddComponent<Assets::MeshComponent>(handle, 0);
+               
+                return newEntity;
+            };
+
+            auto Suzanne = [this](Assets::Scene* scene, Assets::UUID parent) -> Assets::Entity {
+
+                std::string name = GetIncrementedReletiveEntityName(scene, "Suzanne", scene->FindEntity(parent));
+                Assets::Entity newEntity = scene->CreateEntity(name, parent);
+
+                std::filesystem::path meshDirectory = std::filesystem::current_path() / "Resources" / "Meshes";
+                Assets::AssetHandle handle = am->GetOrMakeAsset(meshDirectory / "Suzanne.glb", "Editor/Meshes/Suzanne.glb");
+
+                auto& dm = newEntity.AddComponent<Assets::MeshComponent>(handle, 0);
+               
+
+                return newEntity;
+            };
+
+            //auto EnvironmentMap = [this](Assets::Scene* scene, Assets::UUID parent) -> Assets::Entity {
+            //       
+            //    std::string name = GetIncrementedReletiveEntityName(scene, "Environment Map", scene->FindEntity(parent));
+            //    Assets::Entity newEntity = scene->CreateEntity(name, parent);
+            //
+            //    auto& em = newEntity.AddComponent<Assets::EnvironmentMapComponent>();
+            //    auto& tc = newEntity.GetComponent<Assets::TransformComponent>();
+            //    tc.rotation = glm::vec3(0, 0.0f, 0.0f);
+            //
+            //    return newEntity;
+            //};
+
+            auto DirectionalLight = [this](Assets::Scene* scene, Assets::UUID parent) -> Assets::Entity {
+
+                std::string name = GetIncrementedReletiveEntityName(scene, "Directional Light", scene->FindEntity(parent));
+                auto newEntity = scene->CreateEntity(name, parent);
+                auto& dl = newEntity.AddComponent<Assets::DirectionalLightComponent>();
+
+                return newEntity;
+            };
+
+            //auto PointLight = [this](Assets::Scene* scene, Assets::UUID parent) -> Assets::Entity {
+            //
+            //    std::string name = GetIncrementedReletiveEntityName("Point Light", scene->FindEntity(parent));
+            //    Assets::Entity newEntity = scene->CreateEntity(name, parent);
+            // 
+            //    auto& dl = newEntity.AddComponent<Assets::PointLightComponent>();
+            //    
+            //    return newEntity;
+            //};
+
+            //auto SpotLight = [this](Assets::Scene* scene, Assets::UUID parent) -> Assets::Entity {
+            //
+            //    std::string name = GetIncrementedReletiveEntityName(scene, "Spot Light", scene->FindEntity(parent));
+            //    Assets::Entity newEntity = scene->CreateEntity(name, parent);
+            // 
+            //   auto& dl = newEntity.AddComponent<Assets::SpotLightComponent>();
+            //    
+            //    return newEntity;
+            //};
+
+            createEnityMapFucntions = {
+
+                { "Empty"                , Empty },
+                { "Mesh/Plane"           , PlaneMesh },
+                { "Mesh/Cube"            , CubeMesh },
+                { "Mesh/Capsule"         , CapsuleMesh },
+                { "Mesh/UVSphere"        , UVSphereMesh },
+                { "Mesh/IcoSphere"       , IcoSphereMesh },
+                { "Mesh/Cylinder"        , CylinderMesh },
+                { "Mesh/Cone"            , ConeMesh },
+                { "Mesh/Torus"           , TorusMesh },
+                { "Mesh/Suzanne"         , Suzanne },
+                //{ "Light/EnvironmentMap" , EnvironmentMap },
+                { "Light/Directional"    , DirectionalLight },
+                //{ "Light/Point"			 , PointLight },
+                //{ "Light/Spot"			 , SpotLight },
+            };
+        }
+
+        Assets::Entity CreateEntity(Assets::Scene* scene, const std::string& key, Assets::UUID parent)
+        {
+            if (createEnityMapFucntions.contains(key))
+                return createEnityMapFucntions.at(key)(scene, parent);
+
+            return {};
+        }
+
+        void AddFactory(const std::string& key, std::function<Assets::Entity(Assets::Scene* scene, Assets::UUID)> function)
+        {
+            createEnityMapFucntions[key] = function;
+        }
+
+        std::string IncrementString(const std::string& str)
+        {
+            std::string input = str;
+            uint32_t number = 0;
+            uint32_t multiplier = 1;
+
+            for (size_t i = input.length() - 1; i > 0; --i)
+            {
+                auto c = input[i];
+                if (std::isdigit(c))
+                {
+                    number += (input[i] - '0') * multiplier;
+                    multiplier *= 10;
+                }
+                else if (number != 0)
+                {
+                    // If a non-digit character is encountered after we've started
+                    // accumulating the number, break the loop.
+                    break;
+                }
+            }
+
+            std::string strNumber = std::to_string(number + 1);
+
+            std::string result = input;
+            size_t pos = result.find_last_of("0123456789"); // Finding the position of the last digit
+            if (pos != std::string::npos)
+            {
+                while (pos > 0 && std::isdigit(result[pos - 1]))
+                    pos--; // Move back if it's a multi-digit number
+
+                result.replace(pos, result.length() - pos, strNumber); // Replace the number
+            }
+            else
+            {
+                result += " " + strNumber;
+            }
+
+            return result;
+        }
+
+        bool IsEntityNameExistInChildren(Assets::Scene* scene, const std::string& name, Assets::Entity entity)
+        {
+            for (auto id : entity.GetChildren())
+            {
+                Assets::Entity entity = scene->FindEntity(id);
+                if (entity.GetName() == name)
+                    return true;
+            }
+
+            return false;
+        }
+
+        std::string GetIncrementedReletiveEntityName(Assets::Scene* scene, const std::string& name, Assets::Entity parent)
+        {
+            if (!IsEntityNameExistInChildren(scene, name, parent))
+                return  name;
+
+            std::string result = IncrementString(name);
+            return GetIncrementedReletiveEntityName(scene, result, parent); // keep Incrementing the number
+        }
+    };
 }

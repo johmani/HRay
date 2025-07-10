@@ -2,10 +2,12 @@
 
 #if NVRHI_HAS_D3D12
 #include "Embeded/dxil/Main.bin.h"
+#include "Embeded/dxil/PostProcessing_Main.bin.h"
 #endif
 
 #if NVRHI_HAS_VULKAN
 #include "Embeded/spirv/Main.bin.h"
+#include "Embeded/spirv/PostProcessing_Main.bin.h"
 #endif
 
 import HRay;
@@ -58,11 +60,12 @@ static void CreateOrResizeRenderTarget(HRay::RendererData& data, uint32_t width,
     textureDesc.width = width;
     textureDesc.height = height;
     textureDesc.initialState = nvrhi::ResourceStates::UnorderedAccess;
-    textureDesc.format = nvrhi::Format::RGBA8_UNORM;
+    textureDesc.format = nvrhi::Format::RGBA16_UNORM;
     textureDesc.keepInitialState = true;
     textureDesc.isRenderTarget = false;
     textureDesc.isUAV = true;
     data.renderTarget = data.device->createTexture(textureDesc);
+    data.prevRenderTarget = data.device->createTexture(textureDesc);
 
     data.bindingSet.Reset();
 }
@@ -138,6 +141,24 @@ static void CreateOrResizeMaterialBuffer(HRay::RendererData& data, uint32_t newS
     data.bindingSet.Reset();
 }
 
+static void CreateOrResizeDirectionalLightBuffer(HRay::RendererData& data, uint32_t newSize)
+{
+    HE_PROFILE_FUNCTION();
+
+    data.directionalLightData.resize(newSize);
+    nvrhi::BufferDesc bufferDesc;
+    bufferDesc.byteSize = data.directionalLightData.size() * sizeof(HRay::DirectionalLightData);
+    bufferDesc.debugName = "Directional Light Buffer";
+    bufferDesc.structStride = sizeof(HRay::DirectionalLightData);
+    bufferDesc.canHaveRawViews = true;
+    bufferDesc.canHaveUAVs = true;
+    bufferDesc.initialState = nvrhi::ResourceStates::ShaderResource;
+    bufferDesc.keepInitialState = true;
+    data.directionalLightBuffer = data.device->createBuffer(bufferDesc);
+
+    data.bindingSet.Reset();
+}
+
 void HRay::Init(RendererData& data, nvrhi::DeviceHandle pDevice, nvrhi::CommandListHandle commandList)
 {
     HE_PROFILE_FUNCTION();
@@ -160,12 +181,12 @@ void HRay::Init(RendererData& data, nvrhi::DeviceHandle pDevice, nvrhi::CommandL
         data.descriptorTable = HE::CreateRef<Assets::DescriptorTableManager>(data.device, data.bindlessLayout);
     }
 
-    // View Buffer
+    // SceneInfo Buffer
     {
-        HE_PROFILE_SCOPE("create View Buffer");
+        HE_PROFILE_SCOPE("Create SceneInfo Buffer");
 
-        data.viewBuffer = data.device->createBuffer(nvrhi::utils::CreateVolatileConstantBufferDesc(sizeof(ViewBuffer), "ViewBuffer", sizeof(ViewBuffer)));
-        HE_VERIFY(data.viewBuffer);
+        data.sceneInfoBuffer = data.device->createBuffer(nvrhi::utils::CreateVolatileConstantBufferDesc(sizeof(SceneInfo), "SceneInfoBuffer", sizeof(SceneInfo)));
+        HE_VERIFY(data.sceneInfoBuffer);
     }
 
     // Shaders
@@ -174,6 +195,11 @@ void HRay::Init(RendererData& data, nvrhi::DeviceHandle pDevice, nvrhi::CommandL
 
         data.shaderLibrary = HE::RHI::CreateShaderLibrary(data.device, STATIC_SHADER(Main), nullptr);
         HE_VERIFY(data.shaderLibrary);
+
+        nvrhi::ShaderDesc desc;
+        desc.shaderType = nvrhi::ShaderType::Compute;
+        desc.entryName = "Main";
+        data.cs = HE::RHI::CreateStaticShader(data.device, STATIC_SHADER(PostProcessing_Main), nullptr, desc);
     }
 
     // Samplers
@@ -201,6 +227,7 @@ void HRay::Init(RendererData& data, nvrhi::DeviceHandle pDevice, nvrhi::CommandL
            nvrhi::BindingLayoutItem::StructuredBuffer_SRV(1),
            nvrhi::BindingLayoutItem::StructuredBuffer_SRV(2),
            nvrhi::BindingLayoutItem::StructuredBuffer_SRV(3),
+           nvrhi::BindingLayoutItem::StructuredBuffer_SRV(4),
            nvrhi::BindingLayoutItem::Texture_UAV(0),
            nvrhi::BindingLayoutItem::Sampler(0),
            nvrhi::BindingLayoutItem::VolatileConstantBuffer(0)
@@ -208,6 +235,22 @@ void HRay::Init(RendererData& data, nvrhi::DeviceHandle pDevice, nvrhi::CommandL
 
         data.bindingLayout = data.device->createBindingLayout(desc);
         HE_ASSERT(data.bindingLayout);
+    }
+
+    // PostProcessing Binding Layout
+    {
+        HE_PROFILE_SCOPE("createBindingLayout");
+
+        nvrhi::BindingLayoutDesc desc;
+        desc.visibility = nvrhi::ShaderType::All;
+        desc.bindings = {
+           nvrhi::BindingLayoutItem::Texture_UAV(0),
+           nvrhi::BindingLayoutItem::Texture_UAV(1),
+           nvrhi::BindingLayoutItem::PushConstants(0, sizeof(uint32_t))
+        };
+
+        data.postProcessingBindingLayout = data.device->createBindingLayout(desc);
+        HE_ASSERT(data.postProcessingBindingLayout);
     }
 
     // Pipeline
@@ -230,7 +273,7 @@ void HRay::Init(RendererData& data, nvrhi::DeviceHandle pDevice, nvrhi::CommandL
             false
         } };
 
-        pipelineDesc.maxPayloadSize = sizeof(Math::float4) + sizeof(Math::float3) * 2 + sizeof(float);
+        pipelineDesc.maxPayloadSize = sizeof(Math::float4) + sizeof(Math::float3) * 2 + sizeof(float) * 3;
         data.pipeline = data.device->createRayTracingPipeline(pipelineDesc);
         HE_VERIFY(data.pipeline);
 
@@ -240,6 +283,12 @@ void HRay::Init(RendererData& data, nvrhi::DeviceHandle pDevice, nvrhi::CommandL
         data.shaderTable->addHitGroup("HitGroup");
     }
 
+    // Compute
+    {
+        data.computePipeline = data.device->createComputePipeline({ data.cs, { data.postProcessingBindingLayout } }); 
+        HE_VERIFY(data.computePipeline);
+    }
+
     {
         HE_PROFILE_SCOPE("Create Resources");
 
@@ -247,6 +296,7 @@ void HRay::Init(RendererData& data, nvrhi::DeviceHandle pDevice, nvrhi::CommandL
         CreateOrResizeGeoBuffer(data, 1024);
         CreateOrResizeInstanceBuffer(data, 1024);
         CreateOrResizeMaterialBuffer(data, 1024);
+        CreateOrResizeDirectionalLightBuffer(data, 2);
     }
 }
 
@@ -257,6 +307,7 @@ void HRay::BeginScene(RendererData& data)
     data.geometryCount = 0;
     data.instanceCount = 0;
     data.materialCount = 0;
+    data.sceneInfo.directionalLightCount = 0;
 
     {
         data.materials.clear();
@@ -275,21 +326,28 @@ void HRay::BeginScene(RendererData& data)
         data.instances.clear();
         data.instances.resize(data.instances.capacity());
     }
+    {
+        data.directionalLightData.clear();
+        data.directionalLightData.resize(data.directionalLightData.capacity());
+    }
 }
 
 void HRay::EndScene(RendererData& data, nvrhi::ICommandList* commandList, const ViewDesc& viewDesc)
 {
     HE_PROFILE_FUNCTION();
 
-    // ViewBuffer
+    // SceneInfo
     {
-        ViewBuffer buffer;
-        buffer.clipToWorld = Math::inverse(viewDesc.projection * viewDesc.view);
-        buffer.cameraPosition = viewDesc.cameraPosition;
-        buffer.viewSize = Math::float2(viewDesc.width, viewDesc.height);
-        buffer.viewSizeInv = 1.0f / buffer.viewSize;
+        data.sceneInfo.worldToView = viewDesc.view;
+        data.sceneInfo.viewToClip = viewDesc.projection;
+        data.sceneInfo.clipToWorld = Math::inverse(viewDesc.projection * viewDesc.view);
+        data.sceneInfo.cameraPosition = viewDesc.cameraPosition;
+        data.sceneInfo.viewSize = Math::float2(viewDesc.width, viewDesc.height);
+        data.sceneInfo.fov = Math::radians(viewDesc.fov);
+        data.sceneInfo.viewSizeInv = 1.0f / data.sceneInfo.viewSize;
+        data.sceneInfo.frameIndex = data.frameIndex;
 
-        commandList->writeBuffer(data.viewBuffer, &buffer, sizeof(buffer));
+        commandList->writeBuffer(data.sceneInfoBuffer, &data.sceneInfo, sizeof(SceneInfo));
     }
 
     if (data.renderTarget && (viewDesc.width != data.renderTarget->getDesc().width || viewDesc.height != data.renderTarget->getDesc().height))
@@ -297,25 +355,40 @@ void HRay::EndScene(RendererData& data, nvrhi::ICommandList* commandList, const 
 
     if (!data.bindingSet)
     {
-        HE_PROFILE_SCOPE("CreateBindingSet");
+        {
+            HE_PROFILE_SCOPE("CreateBindingSet");
 
-        nvrhi::BindingSetDesc bindingSetDesc;
-        bindingSetDesc.bindings = {
-            nvrhi::BindingSetItem::RayTracingAccelStruct(0, data.topLevelAS),
-            nvrhi::BindingSetItem::StructuredBuffer_SRV(1, data.instanceBuffer),
-            nvrhi::BindingSetItem::StructuredBuffer_SRV(2, data.geometryBuffer),
-            nvrhi::BindingSetItem::StructuredBuffer_SRV(3, data.materialBuffer),
-            nvrhi::BindingSetItem::Texture_UAV(0, data.renderTarget),
-            nvrhi::BindingSetItem::Sampler(0, data.anisotropicWrapSampler),
-            nvrhi::BindingSetItem::ConstantBuffer(0, data.viewBuffer)
-        };
+            nvrhi::BindingSetDesc bindingSetDesc;
+            bindingSetDesc.bindings = {
+                nvrhi::BindingSetItem::RayTracingAccelStruct(0, data.topLevelAS),
+                nvrhi::BindingSetItem::StructuredBuffer_SRV(1, data.instanceBuffer),
+                nvrhi::BindingSetItem::StructuredBuffer_SRV(2, data.geometryBuffer),
+                nvrhi::BindingSetItem::StructuredBuffer_SRV(3, data.materialBuffer),
+                nvrhi::BindingSetItem::StructuredBuffer_SRV(4, data.directionalLightBuffer),
+                nvrhi::BindingSetItem::Texture_UAV(0, data.renderTarget),
+                nvrhi::BindingSetItem::Sampler(0, data.anisotropicWrapSampler),
+                nvrhi::BindingSetItem::ConstantBuffer(0, data.sceneInfoBuffer)
+            };
 
-        data.bindingSet = data.device->createBindingSet(bindingSetDesc, data.bindingLayout);
+            data.bindingSet = data.device->createBindingSet(bindingSetDesc, data.bindingLayout);
+        }
+
+        {
+            nvrhi::BindingSetDesc bindingSetDesc;
+            bindingSetDesc.bindings = {
+                nvrhi::BindingSetItem::Texture_UAV(0, data.prevRenderTarget),
+                nvrhi::BindingSetItem::Texture_UAV(1, data.renderTarget),
+                nvrhi::BindingSetItem::PushConstants(0, sizeof(uint32_t))
+            };
+
+            data.postProcessingBindingSet = data.device->createBindingSet(bindingSetDesc, data.postProcessingBindingLayout);
+        }
     }
 
     commandList->writeBuffer(data.geometryBuffer, data.geometryData.data(), data.geometryCount * sizeof(GeometryData));
     commandList->writeBuffer(data.instanceBuffer, data.instanceData.data(), data.instanceCount * sizeof(InstanceData));
     commandList->writeBuffer(data.materialBuffer, data.materialData.data(), data.materialCount * sizeof(MaterialData));
+    commandList->writeBuffer(data.directionalLightBuffer, data.directionalLightData.data(), data.sceneInfo.directionalLightCount * sizeof(DirectionalLightData));
     commandList->buildTopLevelAccelStruct(data.topLevelAS, data.instances.data(), data.instanceCount, nvrhi::rt::AccelStructBuildFlags::AllowEmptyInstances);
 
     nvrhi::rt::State state;
@@ -323,10 +396,21 @@ void HRay::EndScene(RendererData& data, nvrhi::ICommandList* commandList, const 
     state.bindings = { data.bindingSet, data.descriptorTable->GetDescriptorTable() };
     commandList->setRayTracingState(state);
 
+    commandList->copyTexture(data.prevRenderTarget, {}, data.renderTarget, {});
+
     nvrhi::rt::DispatchRaysArguments args;
     args.width = viewDesc.width;
     args.height = viewDesc.height;
     commandList->dispatchRays(args);
+
+    commandList->setComputeState({ data.computePipeline , { data.postProcessingBindingSet } });
+
+    uint32_t frameIndex = data.frameIndex;
+    commandList->setPushConstants(&frameIndex, sizeof(uint32_t));
+    commandList->dispatch(viewDesc.width / 8, viewDesc.height / 8);
+    
+    data.frameIndex += data.sceneInfo.maxSamples;
+    data.time = HE::Application::GetTime() - data.lastTime;
 }
 
 void HRay::SubmitMesh(RendererData& data, Assets::Asset asset, Assets::Mesh& mesh, Math::float4x4 wt, nvrhi::ICommandList* cl)
@@ -529,20 +613,35 @@ void HRay::SubmitMesh(RendererData& data, Assets::Asset asset, Assets::Mesh& mes
                         data.textureCount++;
                     }
 
-                    uint32_t index = data.materials.at(geometry.materailHandle);
-                    auto& mat = data.materialData[index];
-                    mat.baseColor = material->baseColor;
+                    Assets::Texture* metallicRoughnessTexture = data.am->GetAsset<Assets::Texture>(material->metallicRoughnessTextureHandle);
+                    if (metallicRoughnessTexture && metallicRoughnessTexture->texture && !metallicRoughnessTexture->descriptor.IsValid())
+                    {
+                        HE_ASSERT(metallicRoughnessTexture->texture);
+                        metallicRoughnessTexture->descriptor = data.descriptorTable->CreateDescriptorHandle(nvrhi::BindingSetItem::Texture_SRV(0, metallicRoughnessTexture->texture));
+                        data.textureCount++;
+                    }
 
-                    Math::float3 emissive = Math::convertSRGBToLinear(material->emissiveColor);
-                    emissive *= Luminance(material->emissiveEV);
-                    mat.emissiveColor = emissive;
-                    
-                    mat.uvSet = (int)material->uvSet;
-                    
-                    mat.baseTextureIndex     = baseTexture     ? baseTexture->descriptor.Get()     : c_Invalid;
-                    mat.emissiveTextureIndex = emissiveTexture ? emissiveTexture->descriptor.Get() : c_Invalid;
-                    
-                    gd.materialIndex = index;
+                    Assets::Texture* normalTexture = data.am->GetAsset<Assets::Texture>(material->normalTextureHandle);
+                    if (normalTexture && normalTexture->texture && !normalTexture->descriptor.IsValid())
+                    {
+                        HE_ASSERT(normalTexture->texture);
+                        normalTexture->descriptor = data.descriptorTable->CreateDescriptorHandle(nvrhi::BindingSetItem::Texture_SRV(0, normalTexture->texture));
+                        data.textureCount++;
+                    }
+
+                    uint32_t index                    = data.materials.at(geometry.materailHandle);
+                    auto& mat                         = data.materialData[index];
+                    mat.baseColor                     = material->baseColor;
+                    mat.metallic                      = material->metallic;
+                    mat.roughness                     = material->roughness;
+                    mat.uvSet                         = (int)material->uvSet;
+                    mat.emissiveColor                 = Math::convertSRGBToLinear(material->emissiveColor) * material->emissiveEV;
+                    mat.baseTextureIndex              = baseTexture              ? baseTexture->descriptor.Get()              : c_Invalid;
+                    mat.emissiveTextureIndex          = emissiveTexture          ? emissiveTexture->descriptor.Get()          : c_Invalid;
+                    mat.metallicRoughnessTextureIndex = metallicRoughnessTexture ? metallicRoughnessTexture->descriptor.Get() : c_Invalid;
+                    mat.normalTextureIndex            = normalTexture            ? normalTexture->descriptor.Get()            : c_Invalid;
+                    mat.uvMat                         = Math::CreateMat3(material->offset, material->rotation, material->scale);
+                    gd.materialIndex                  = index;
                 }
             }
 
@@ -551,6 +650,28 @@ void HRay::SubmitMesh(RendererData& data, Assets::Asset asset, Assets::Mesh& mes
     }
 
     data.instanceCount++;
+}
+
+void HRay::SubmitDirectionalLight(RendererData& data, const Assets::DirectionalLightComponent& light, Math::float4x4 wt, nvrhi::ICommandList* cl)
+{
+    if (data.directionalLightData.size() <= data.sceneInfo.directionalLightCount)
+        CreateOrResizeDirectionalLightBuffer(data, (uint32_t)data.directionalLightData.size() * 2);
+
+    HRay::DirectionalLightData& l = data.directionalLightData[data.sceneInfo.directionalLightCount];
+    l.color = light.color;
+    l.intensity = light.intensity;
+    l.angularRadius = light.angularRadius;
+    l.haloSize = light.haloSize;
+    l.haloFalloff = light.haloFalloff;
+    l.direction = glm::normalize(glm::vec3(wt[2]));
+
+    data.sceneInfo.directionalLightCount++;
+}
+
+void HRay::Clear(RendererData& data)
+{
+    data.frameIndex = 0;
+    data.lastTime = HE::Application::GetTime();
 }
 
 void HRay::ReleaseTexture(RendererData& data, Assets::Texture* texture)

@@ -90,6 +90,9 @@ struct FontSize
 #define Icon_Settings      ICON_FA_BAHAI
 #define Icon_Build         ICON_FA_HAMMER
 #define Icon_Code          ICON_FA_CODE
+#define Icon_Sun           ICON_FA_SUN
+#define Icon_Palette       ICON_FA_PALETTE
+#define Icon_Camera        ICON_FA_CAMERA
 
 struct Project
 {
@@ -104,6 +107,9 @@ struct HRayApp : public Layer, public Assets::AssetEventCallback
     ImVec4 colors[Color::Count];
     ImVec4 meshColor = { 0.1f, 0.7f, 9.0f, 1.0f };
     ImVec4 transformColor = { 0.9f, 0.7f, 0.1f, 1.0f };
+    ImVec4 lightColor = { 0.9f, 0.7f, 0.1f, 1.0f };
+    ImVec4 materialColor = { 0.9f, 0.5f, 0.8f, 1.0f };
+    ImVec4 cameraColor = { 0.7f, 0.1f, 0.9f, 1.0f };
 
     // App
     Ref<Editor::OrbitCamera> orbitCamera;
@@ -122,20 +128,25 @@ struct HRayApp : public Layer, public Assets::AssetEventCallback
     bool enableInspectorWindow = true;
     bool enableAssetManagerWindow = true;
     bool enableApplicationWindow = true;
-    bool enableAdvancedMode = false;
+    bool enableRendererWindow = true;
     bool enableStartMenu = true;
     bool enableCreateNewProjectPopub = false;
     ImGuiTextFilter textFilter;
+    Editor::EntityFactory entityFactory;
 
     std::string projectPath;
     std::string projectName;
     std::filesystem::path appData;
     std::filesystem::path keyBindingsFilePath;
     Project project;
+    
+    Math::float3 cameraPrevPos;
+    Math::quat cameraPrevRot;
+    bool clearReq = false;
 
     nvrhi::DeviceHandle device;
     nvrhi::CommandListHandle commandList;
-    nvrhi::TextureHandle icon, close, min, max, res;
+    nvrhi::TextureHandle icon, close, min, max, res, board;
 
     Assets::AssetManager assetManager;
     Assets::SubscriberHandle AssetEventCallbackHandle = 0;
@@ -172,6 +183,8 @@ struct HRayApp : public Layer, public Assets::AssetEventCallback
             Assets::AssetManagerDesc desc;
             assetManager.Init(device, desc);
             OpenProject(project.projectFilePath);
+
+            entityFactory.Init(&assetManager);
         }
 
         // icons
@@ -185,7 +198,8 @@ struct HRayApp : public Layer, public Assets::AssetEventCallback
                 close = Assets::LoadTexture(Buffer(g_icon_close, sizeof(g_icon_close)), device, cl);
                 min = Assets::LoadTexture(Buffer(g_icon_minimize, sizeof(g_icon_minimize)), device, cl);
                 max = Assets::LoadTexture(Buffer(g_icon_maximize, sizeof(g_icon_maximize)), device, cl);
-                res = Assets::LoadTexture(Buffer(g_icon_restore, sizeof(g_icon_restore)), device, cl);
+                res = Assets::LoadTexture(Buffer(g_icon_restore, sizeof(g_icon_restore)), device, cl); 
+                board = Assets::LoadTexture(Buffer(g_icon_board, sizeof(g_icon_board)), device, cl);
             }
             cl->close();
             device->executeCommandList(cl);
@@ -255,7 +269,7 @@ struct HRayApp : public Layer, public Assets::AssetEventCallback
         switch (type)
         {
         case Assets::AssetType::MeshSource:
-
+        {
             auto& meshSource = asset.Get<Assets::MeshSource>();
 
             if (importing)
@@ -268,6 +282,10 @@ struct HRayApp : public Layer, public Assets::AssetEventCallback
 
             break;
         }
+
+        default: HRay::Clear(rd);
+        }
+
     }
 
     void OnAssetUnloaded(Assets::Asset asset) override
@@ -299,24 +317,47 @@ struct HRayApp : public Layer, public Assets::AssetEventCallback
             {
                 HRay::BeginScene(rd);
 
-                auto view = scene->registry.view<Assets::MeshComponent>();
-                for (auto e : view)
                 {
-                    Assets::Entity entity = { e, scene };
-                    auto& dm = entity.GetComponent<Assets::MeshComponent>();
-                    auto wt = entity.GetWorldSpaceTransformMatrix();
-
-                    auto asset = assetManager.GetAsset(dm.meshSourceHandle);
-                    if (asset && asset.Has<Assets::MeshSource>() && asset.GetState() == Assets::AssetState::Loaded)
+                    auto view = scene->registry.view<Assets::MeshComponent>();
+                    for (auto e : view)
                     {
-                        auto& meshSource = asset.Get<Assets::MeshSource>();
-                        auto& mesh = meshSource.meshes[dm.meshIndex];
+                        Assets::Entity entity = { e, scene };
+                        auto& dm = entity.GetComponent<Assets::MeshComponent>();
+                        auto wt = entity.GetWorldSpaceTransformMatrix();
 
-                        HRay::SubmitMesh(rd, asset, mesh, wt, commandList);
+                        auto asset = assetManager.GetAsset(dm.meshSourceHandle);
+                        if (asset && asset.Has<Assets::MeshSource>() && asset.GetState() == Assets::AssetState::Loaded)
+                        {
+                            auto& meshSource = asset.Get<Assets::MeshSource>();
+                            auto& mesh = meshSource.meshes[dm.meshIndex];
+
+                            HRay::SubmitMesh(rd, asset, mesh, wt, commandList);
+                        }
                     }
                 }
 
-                HRay::EndScene(rd, commandList, { editorCamera->view.view, editorCamera->view.projection, editorCamera->transform.position, (uint32_t)width, (uint32_t)height });
+                {
+                    auto view = scene->registry.view<Assets::DirectionalLightComponent>();
+                    for (auto e : view)
+                    {
+                        Assets::Entity entity = { e, scene };
+                        auto& light = entity.GetComponent<Assets::DirectionalLightComponent>();
+                        auto wt = entity.GetWorldSpaceTransformMatrix();
+
+                        HRay::SubmitDirectionalLight(rd, light, wt, commandList);
+                    }
+                }
+              
+                HRay::EndScene(rd, commandList, { editorCamera->view.view, editorCamera->view.projection , editorCamera->transform.position, editorCamera->view.fov, (uint32_t)width, (uint32_t)height });
+
+                clearReq |= cameraPrevPos != editorCamera->transform.position || cameraPrevRot != editorCamera->transform.rotation;
+                if (clearReq)
+                {
+                    cameraPrevPos = editorCamera->transform.position;
+                    cameraPrevRot = editorCamera->transform.rotation;
+                    HRay::Clear(rd);
+                    clearReq = false;
+                }
             }
         }
 
@@ -366,17 +407,14 @@ struct HRayApp : public Layer, public Assets::AssetEventCallback
                 if (Input::IsKeyDown(Key::LeftShift) && Input::IsKeyPressed(Key::D3))
                     enableInspectorWindow = enableInspectorWindow ? false : true;
 
-                if (enableAdvancedMode)
-                {
-                    if (Input::IsKeyDown(Key::LeftShift) && Input::IsKeyPressed(Key::D4))
-                        enableAssetManagerWindow = enableAssetManagerWindow ? false : true;
+                if (Input::IsKeyDown(Key::LeftShift) && Input::IsKeyPressed(Key::D4))
+                    enableAssetManagerWindow = enableAssetManagerWindow ? false : true;
 
-                    if (Input::IsKeyDown(Key::LeftShift) && Input::IsKeyPressed(Key::D5))
-                        enableApplicationWindow = enableApplicationWindow ? false : true;
-                }
+                if (Input::IsKeyDown(Key::LeftShift) && Input::IsKeyPressed(Key::D5))
+                    enableApplicationWindow = enableApplicationWindow ? false : true;
 
-                if (Input::IsKeyDown(Key::LeftShift) && Input::IsKeyPressed(Key::D0))
-                    enableAdvancedMode = enableAdvancedMode ? false : true;
+                if (Input::IsKeyDown(Key::LeftShift) && Input::IsKeyPressed(Key::D6))
+                    enableRendererWindow = enableRendererWindow ? false : true;
             }
 
             // Scene
@@ -400,12 +438,6 @@ struct HRayApp : public Layer, public Assets::AssetEventCallback
 
                     if (Input::IsKeyDown(Key::LeftControl) && Input::IsKeyReleased(Key::F))
                         FocusCamera();
-
-                    if (Input::IsKeyReleased(Key::Delete))
-                    {
-                        Assets::Scene* scene = assetManager.GetAsset<Assets::Scene>(sceneHandle);
-                        if (scene) scene->DestroyEntity(selectedEntity);
-                    }
                 }
             }
 
@@ -544,17 +576,14 @@ struct HRayApp : public Layer, public Assets::AssetEventCallback
                     if (ImGui::MenuItem("Inspector", "Left Shift + 3", enableInspectorWindow))
                         enableInspectorWindow = enableInspectorWindow ? false : true;
 
-                    if (enableAdvancedMode)
-                    {
-                        if (ImGui::MenuItem("Asset Manager", "Left Shift + 4", enableAssetManagerWindow))
-                            enableAssetManagerWindow = enableAssetManagerWindow ? false : true;
+                    if (ImGui::MenuItem("Renderer", "Left Shift + 6", enableRendererWindow))
+                        enableRendererWindow = enableRendererWindow ? false : true;
 
-                        if (ImGui::MenuItem("Application", "Left Shift + 5", enableApplicationWindow))
-                            enableApplicationWindow = enableApplicationWindow ? false : true;
-                    }
+                    if (ImGui::MenuItem("Asset Manager", "Left Shift + 4", enableAssetManagerWindow))
+                        enableAssetManagerWindow = enableAssetManagerWindow ? false : true;
 
-                    if (ImGui::MenuItem("Advanced Mode", "Left Shift + 0", enableAdvancedMode))
-                        enableAdvancedMode = enableAdvancedMode ? false : true;
+                    if (ImGui::MenuItem("Application", "Left Shift + 5", enableApplicationWindow))
+                        enableApplicationWindow = enableApplicationWindow ? false : true;
 
                     ImGui::EndMenu();
                 }
@@ -596,7 +625,9 @@ struct HRayApp : public Layer, public Assets::AssetEventCallback
 
                         ImGui::ShiftCursor((ImGui::GetContentRegionAvail() - ImGui::CalcTextSize(m)) / 2);
                         if (ImGui::TextButton(m))
+                        {
                             enableCreateNewProjectPopub = true;
+                        }
 
                         ImGui::ShiftCursorX((ImGui::GetContentRegionAvail().x - ImGui::CalcTextSize(m1).x) / 2);
                         if (ImGui::TextButton(m1))
@@ -608,103 +639,6 @@ struct HRayApp : public Layer, public Assets::AssetEventCallback
                     ImGui::End();
                 }
 
-                if (enableCreateNewProjectPopub)
-                {
-                    ImGui::SetNextWindowBgAlpha(0.8f);
-                    const ImGuiViewport* viewport = ImGui::GetMainViewport();
-                    ImGui::SetNextWindowPos(viewport->WorkPos);
-                    ImGui::SetNextWindowSize(viewport->WorkSize);
-                    ImGui::Begin("new Project Fullscreen window", nullptr, fullScreenWinFlags);
-
-                    {
-                        ImGui::ScopedStyle wbs(ImGuiStyleVar_WindowBorderSize, 0.0f);
-                        ImGui::ScopedStyle wr(ImGuiStyleVar_WindowRounding, 4.0f);
-                        ImGui::ScopedStyle scopedWindowPadding(ImGuiStyleVar_WindowPadding, mainWindowPadding);
-                        ImGui::ScopedStyle scopedItemSpacing(ImGuiStyleVar_ItemSpacing, mainItemSpacing);
-
-                        const ImGuiViewport* viewport = ImGui::GetMainViewport();
-                        ImGui::SetNextWindowPos(viewport->WorkPos + viewport->WorkSize * 0.1f / 2);
-                        ImGui::SetNextWindowSize(viewport->WorkSize * 0.9f);
-                        ImGui::Begin("CreateNewProject", nullptr, fullScreenWinFlags);
-
-                        if (!ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows))
-                            enableCreateNewProjectPopub = false;
-
-                        {
-                            ImGui::ScopedStyle swp(ImGuiStyleVar_WindowPadding, ImVec2(8, 8) * scale);
-
-                            ImGui::BeginChild("Creat New Project", ImVec2(0, 0), ImGuiChildFlags_AlwaysUseWindowPadding);
-
-                            bool validPath = std::filesystem::exists(projectPath);
-                            bool validName = !std::filesystem::exists(std::filesystem::path(projectPath) / projectName);
-
-                            {
-                                ImGui::ScopedStyle fp(ImGuiStyleVar_FramePadding, ImVec2(8, 8));
-
-                                {
-                                    ImGui::ScopedFont sf(FontType::Blod);
-                                    ImGui::TextUnformatted("Project Name");
-                                }
-                                ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
-
-                                if (!validName) ImGui::PushStyleColor(ImGuiCol_Text, colors[Color::Error]);
-                                ImGui::InputTextWithHint("##Project Name", "Project Name", &projectName);
-                                if (!validName) ImGui::PopStyleColor();
-                            }
-
-                            ImGui::Dummy({ -1, 10 });
-
-                            {
-                                ImGui::ScopedStyle fp(ImGuiStyleVar_FramePadding, ImVec2(8, 8));
-
-                                {
-                                    ImGui::ScopedFont sf(FontType::Blod);
-                                    ImGui::TextUnformatted("Location");
-                                }
-                                ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 50);
-
-                                if (!validPath) ImGui::PushStyleColor(ImGuiCol_Text, colors[Color::Error]);
-                                ImGui::InputTextWithHint("##Location", "Location", &projectPath);
-                                if (!validPath) ImGui::PopStyleColor();
-
-                                ImGui::SameLine();
-                                if (ImGui::Button(Icon_Folder, { -1,0 }))
-                                {
-                                    auto path = FileDialog::SelectFolder().string();
-                                    if (!path.empty())
-                                        projectPath = path;
-                                }
-                            }
-
-                            ImGui::Dummy({ -1, 10 });
-
-                            {
-                                ImGui::ScopedFont sf(FontType::Blod);
-                                ImGui::ScopedStyle fp(ImGuiStyleVar_FramePadding, ImVec2(8, 8));
-
-                                {
-                                    ImGui::ScopedDisabled sd(!validName || !validPath);
-                                    ImGui::ScopedButtonColor sbs(colors[Color::PrimaryButton]);
-                                    if (ImGui::Button("Create Project", { -1,0 }))
-                                    {
-                                        CreateNewProject(projectPath, projectName);
-                                        enableCreateNewProjectPopub = false;
-                                    }
-                                }
-
-                                if (ImGui::Button("Cancel", { -1,0 }))
-                                {
-                                    enableCreateNewProjectPopub = false;
-                                }
-                            }
-
-                            ImGui::EndChild();
-                        }
-
-                        ImGui::End();
-                    }
-                    ImGui::End();
-                }
             }
             else
             {
@@ -725,6 +659,8 @@ struct HRayApp : public Layer, public Assets::AssetEventCallback
                         {
                             width = w;
                             height = h;
+
+                            clearReq |= true;
                         }
 
                         editorCamera->SetViewportSize(width, height);
@@ -787,6 +723,8 @@ struct HRayApp : public Layer, public Assets::AssetEventCallback
                                     tc.position = position;
                                     tc.rotation = quaternion;
                                     tc.scale = scale;
+
+                                    clearReq |= true;
                                 }
                             }
                         }
@@ -868,7 +806,7 @@ struct HRayApp : public Layer, public Assets::AssetEventCallback
                             Editor::BeginChildView("Stats", location);
 
                             const auto& appStats = Application::GetStats();
-                            ImGui::Text("CPUMain %.2f ms | FPS %i", appStats.CPUMainTime, appStats.FPS);
+                            ImGui::Text("CPUMain %.2f ms | FPS %i | Sampels %i | Time %.2f s", appStats.CPUMainTime, appStats.FPS, rd.frameIndex, rd.time);
 
                             Editor::EndChildView(location);
                         }
@@ -880,8 +818,109 @@ struct HRayApp : public Layer, public Assets::AssetEventCallback
 
                 Hierarchy();
                 Inspector();
-                if (enableAdvancedMode) AssetManager();
-                if (enableAdvancedMode) Application();
+                RendererSettings();
+                AssetManager();
+                Application();
+            }
+
+            if (enableCreateNewProjectPopub)
+            {
+                constexpr ImGuiWindowFlags fullScreenWinFlags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings;
+
+                ImGui::SetNextWindowBgAlpha(0.8f);
+                const ImGuiViewport* viewport = ImGui::GetMainViewport();
+                ImGui::SetNextWindowPos(viewport->WorkPos);
+                ImGui::SetNextWindowSize(viewport->WorkSize);
+                ImGui::Begin("new Project Fullscreen window", nullptr, fullScreenWinFlags);
+
+                {
+                    ImGui::ScopedStyle wbs(ImGuiStyleVar_WindowBorderSize, 0.0f);
+                    ImGui::ScopedStyle wr(ImGuiStyleVar_WindowRounding, 4.0f);
+                    ImGui::ScopedStyle scopedWindowPadding(ImGuiStyleVar_WindowPadding, mainWindowPadding);
+                    ImGui::ScopedStyle scopedItemSpacing(ImGuiStyleVar_ItemSpacing, mainItemSpacing);
+
+                    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+                    ImGui::SetNextWindowPos(viewport->WorkPos + viewport->WorkSize * 0.1f / 2);
+                    ImGui::SetNextWindowSize(viewport->WorkSize * 0.9f);
+                    ImGui::Begin("CreateNewProject", nullptr, fullScreenWinFlags);
+
+                    if (!ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows))
+                        enableCreateNewProjectPopub = false;
+
+                    {
+                        ImGui::ScopedStyle swp(ImGuiStyleVar_WindowPadding, ImVec2(8, 8) * scale);
+
+                        ImGui::BeginChild("Creat New Project", ImVec2(0, 0), ImGuiChildFlags_AlwaysUseWindowPadding);
+
+                        bool validPath = std::filesystem::exists(projectPath);
+                        bool validName = !std::filesystem::exists(std::filesystem::path(projectPath) / projectName);
+
+                        {
+                            ImGui::ScopedStyle fp(ImGuiStyleVar_FramePadding, ImVec2(8, 8));
+
+                            {
+                                ImGui::ScopedFont sf(FontType::Blod);
+                                ImGui::TextUnformatted("Project Name");
+                            }
+                            ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
+
+                            if (!validName) ImGui::PushStyleColor(ImGuiCol_Text, colors[Color::Error]);
+                            ImGui::InputTextWithHint("##Project Name", "Project Name", &projectName);
+                            if (!validName) ImGui::PopStyleColor();
+                        }
+
+                        ImGui::Dummy({ -1, 10 });
+
+                        {
+                            ImGui::ScopedStyle fp(ImGuiStyleVar_FramePadding, ImVec2(8, 8));
+
+                            {
+                                ImGui::ScopedFont sf(FontType::Blod);
+                                ImGui::TextUnformatted("Location");
+                            }
+                            ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 50);
+
+                            if (!validPath) ImGui::PushStyleColor(ImGuiCol_Text, colors[Color::Error]);
+                            ImGui::InputTextWithHint("##Location", "Location", &projectPath);
+                            if (!validPath) ImGui::PopStyleColor();
+
+                            ImGui::SameLine();
+                            if (ImGui::Button(Icon_Folder, { -1,0 }))
+                            {
+                                auto path = FileDialog::SelectFolder().string();
+                                if (!path.empty())
+                                    projectPath = path;
+                            }
+                        }
+
+                        ImGui::Dummy({ -1, 10 });
+
+                        {
+                            ImGui::ScopedFont sf(FontType::Blod);
+                            ImGui::ScopedStyle fp(ImGuiStyleVar_FramePadding, ImVec2(8, 8));
+
+                            {
+                                ImGui::ScopedDisabled sd(!validName || !validPath);
+                                ImGui::ScopedButtonColor sbs(colors[Color::PrimaryButton]);
+                                if (ImGui::Button("Create Project", { -1,0 }))
+                                {
+                                    CreateNewProject(projectPath, projectName);
+                                    enableCreateNewProjectPopub = false;
+                                }
+                            }
+
+                            if (ImGui::Button("Cancel", { -1,0 }))
+                            {
+                                enableCreateNewProjectPopub = false;
+                            }
+                        }
+
+                        ImGui::EndChild();
+                    }
+
+                    ImGui::End();
+                }
+                ImGui::End();
             }
         }
     }
@@ -902,12 +941,94 @@ struct HRayApp : public Layer, public Assets::AssetEventCallback
         device->executeCommandList(commandList);
     }
 
+    void ContextWindow(Assets::Entity parent)
+    {
+        ImGui::ScopedStyle wp(ImGuiStyleVar_WindowPadding, ImVec2(8, 8));
+        ImGui::ScopedStyle fp(ImGuiStyleVar_FramePadding, ImVec2(4, 4));
+
+        ImGuiPopupFlags flags = ImGuiPopupFlags_NoOpenOverItems | ImGuiPopupFlags_MouseButtonRight;
+        if (ImGui::BeginPopupContextWindow("AddEntityMenu", flags))
+        {
+            AddNewMenu(parent);
+            ImGui::EndPopup();
+        }
+    }
+
+    void AddNewMenu(Assets::Entity parent)
+    {
+        for (auto& [path, function] : entityFactory.createEnityMapFucntions)
+        {
+            if (ImGui::AutoMenuItem(path.c_str(), ImAutoMenuItemFlags_None))
+            {
+                Assets::Scene* scene = assetManager.GetAsset<Assets::Scene>(sceneHandle);
+                function(scene, parent.GetUUID());
+            }
+        }
+    }
+
+    template<typename T>
+    void DisplayAddComponentEntry(const std::string& entryName)
+    {
+        if (selectedEntity && !selectedEntity.HasComponent<T>())
+        {
+            if (ImGui::MenuItem(entryName.c_str()))
+            {
+                selectedEntity.AddComponent<T>();
+
+                ImGui::CloseCurrentPopup();
+            }
+        }
+    }
+
+    bool TextureHandler(Assets::Material* mat, Assets::AssetHandle handle)
+    {
+        if (ImGui::BeginDragDropTarget())
+        {
+            if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CONTENT_BROWSER_ITEM"))
+            {
+                Assets::AssetHandle handle = *(Assets::AssetHandle*)payload->Data;
+                if (assetManager.GetAssetType(handle) == Assets::AssetType::Texture2D)
+                {
+                    
+                    return true;
+                }
+                else
+                {
+                    HE_CORE_WARN("Wrong asset type!");
+                }
+            }
+            ImGui::EndDragDropTarget();
+        }
+
+        // Remove Texture
+        if (assetManager.IsAssetHandleValid(handle) && ImGui::IsItemFocused() && ImGui::IsKeyDown(ImGuiKey::ImGuiKey_Delete))
+        {
+            if (mat->baseTextureHandle == handle)
+                mat->baseTextureHandle = 0;
+            else if (mat->normalTextureHandle == handle)
+                mat->normalTextureHandle = 0;
+            else if (mat->metallicRoughnessTextureHandle == handle)
+                mat->metallicRoughnessTextureHandle = 0;
+            else if (mat->emissiveTextureHandle == handle)
+                mat->emissiveTextureHandle = 0;
+
+            return true;
+        }
+
+        return false;
+    }
+
     void Inspector()
     {
         HE_PROFILE_FUNCTION();
 
         if (!enableInspectorWindow)
             return;
+
+        auto& io = ImGui::GetIO();
+        auto& style = ImGui::GetStyle();
+        float dpiScale = ImGui::GetWindowDpiScale();
+        float scale = ImGui::GetIO().FontGlobalScale * dpiScale;
 
         ImGui::ScopedStyle wp(ImGuiStyleVar_WindowPadding, ImVec2(1, 1));
         ImGui::ScopedStyle is(ImGuiStyleVar_ItemSpacing, ImVec2(4, 1));
@@ -925,10 +1046,12 @@ struct HRayApp : public Layer, public Assets::AssetEventCallback
                     ImGui::ScopedStyle wp(ImGuiStyleVar_WindowPadding, ImVec2(8, 8));
                     ImGui::ScopedStyle fp(ImGuiStyleVar_FramePadding, ImVec2(4, 4));
                     ImGui::BeginChild("Name Component", { 0,0 }, cf);
+
                     auto& nc = selectedEntity.GetComponent<Assets::NameComponent>();
                     const float c_FLT_MIN = 1.175494351e-38F;
                     ImGui::SetNextItemWidth(-FLT_MIN);
                     ImGui::InputText("##Name", &nc.name, ImGuiInputTextFlags_AutoSelectAll | ImGuiInputTextFlags_EnterReturnsTrue);
+
                     ImGui::EndChild();
                 }
 
@@ -945,33 +1068,33 @@ struct HRayApp : public Layer, public Assets::AssetEventCallback
                             ImFieldDrageScalerEvent p = ImField::DragColoredFloat3("Position", &tc.position.x, 0.01f);
                             switch (p)
                             {
-                            case ImFieldDrageScalerEvent_None:   break;
-                            case ImFieldDrageScalerEvent_Edited: break;
-                            case ImFieldDrageScalerEvent_ResetX: tc.position.x = 0; break;
-                            case ImFieldDrageScalerEvent_ResetY: tc.position.y = 0; break;
-                            case ImFieldDrageScalerEvent_ResetZ: tc.position.z = 0; break;
+                            case ImFieldDrageScalerEvent_None:                                       break;
+                            case ImFieldDrageScalerEvent_Edited:                    HRay::Clear(rd); break;
+                            case ImFieldDrageScalerEvent_ResetX: tc.position.x = 0; HRay::Clear(rd); break;
+                            case ImFieldDrageScalerEvent_ResetY: tc.position.y = 0; HRay::Clear(rd); break;
+                            case ImFieldDrageScalerEvent_ResetZ: tc.position.z = 0; HRay::Clear(rd); break;
                             }
 
                             Math::float3 degrees = Math::degrees(tc.rotation.GetEuler());
                             ImFieldDrageScalerEvent r = ImField::DragColoredFloat3("Rotation", &degrees.x, 1.0f);
                             switch (r)
                             {
-                            case ImFieldDrageScalerEvent_None:   break;
-                            case ImFieldDrageScalerEvent_Edited: break;
-                            case ImFieldDrageScalerEvent_ResetX: degrees.x = 0; break;
-                            case ImFieldDrageScalerEvent_ResetY: degrees.y = 0; break;
-                            case ImFieldDrageScalerEvent_ResetZ: degrees.z = 0; break;
+                            case ImFieldDrageScalerEvent_None:                                   break;
+                            case ImFieldDrageScalerEvent_Edited:                HRay::Clear(rd); break;
+                            case ImFieldDrageScalerEvent_ResetX: degrees.x = 0; HRay::Clear(rd); break;
+                            case ImFieldDrageScalerEvent_ResetY: degrees.y = 0; HRay::Clear(rd); break;
+                            case ImFieldDrageScalerEvent_ResetZ: degrees.z = 0; HRay::Clear(rd); break;
                             }
                             tc.rotation = Math::radians(degrees);
 
                             ImFieldDrageScalerEvent s = ImField::DragColoredFloat3("Scale", &tc.scale.x, 0.01f);
                             switch (s)
                             {
-                            case ImFieldDrageScalerEvent_None:   break;
-                            case ImFieldDrageScalerEvent_Edited: break;
-                            case ImFieldDrageScalerEvent_ResetX: tc.scale.x = 0; break;
-                            case ImFieldDrageScalerEvent_ResetY: tc.scale.y = 0; break;
-                            case ImFieldDrageScalerEvent_ResetZ: tc.scale.z = 0; break;
+                            case ImFieldDrageScalerEvent_None:                                    break;
+                            case ImFieldDrageScalerEvent_Edited:                 HRay::Clear(rd); break;
+                            case ImFieldDrageScalerEvent_ResetX: tc.scale.x = 0; HRay::Clear(rd); break;
+                            case ImFieldDrageScalerEvent_ResetY: tc.scale.y = 0; HRay::Clear(rd); break;
+                            case ImFieldDrageScalerEvent_ResetZ: tc.scale.z = 0; HRay::Clear(rd); break;
                             }
 
                             ImGui::EndTable();
@@ -996,22 +1119,23 @@ struct HRayApp : public Layer, public Assets::AssetEventCallback
                                 {
                                     auto& mesh = ms->meshes[dm.meshIndex];
 
-                                    ImField::Button("Mesh Source", meta.filePath.string().c_str(), { -1, 0 });
-                                    ImField::Button("Mesh", mesh.name.c_str(), { -1, 0 });
-                                    ImField::InputUInt("Index", &dm.meshIndex);
-                                    dm.meshIndex = dm.meshIndex >= (uint32_t)ms->meshes.size() ? (uint32_t)ms->meshes.size() - 1 : dm.meshIndex;
+                                    if (ImField::Button("Mesh Source", meta.filePath.string().c_str(), { -1, 0 })) HRay::Clear(rd);
+                                    if (ImField::Button("Mesh", mesh.name.c_str(), { -1, 0 })) HRay::Clear(rd);
+                                    if (ImField::InputUInt("Index", &dm.meshIndex))
+                                    {
+                                        dm.meshIndex = dm.meshIndex >= (uint32_t)ms->meshes.size() ? (uint32_t)ms->meshes.size() - 1 : dm.meshIndex;
+                                        HRay::Clear(rd);
+                                    }
                                 }
                             }
                             else
                             {
                                 auto& meta = assetManager.GetMetadata(dm.meshSourceHandle);
 
-                                ImField::Field("Mesh Source");
                                 ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.0f, 0.0f, 1.0f));
-                                ImGui::Button(meta.filePath.string().c_str(), { -1, 0 });
+                                if(ImField::Button("Mesh Source", meta.filePath.string().c_str(), { -1, 0 })) HRay::Clear(rd);
                                 ImGui::PopStyleColor();
-
-                                ImField::InputUInt("Index", &dm.meshIndex);
+                                if (ImField::InputUInt("Index", &dm.meshIndex)) HRay::Clear(rd);
                             }
 
                             ImGui::EndTable();
@@ -1020,38 +1144,128 @@ struct HRayApp : public Layer, public Assets::AssetEventCallback
                     ImField::EndBlock();
 
 
-                    if (ImField::BeginBlock("Material Component", Icon_Mesh, meshColor))
+                    if (ImField::BeginBlock("Material Component", Icon_Palette, materialColor))
                     {
                         auto& dm = selectedEntity.GetComponent<Assets::MeshComponent>();
                         auto ms = assetManager.GetAsset<Assets::MeshSource>(dm.meshSourceHandle);
-                        auto& mesh = ms->meshes[dm.meshIndex];
-                        
-                        //if (ImGui::BeginTable("Material Component", 2, ImGuiTableFlags_SizingFixedFit))
+                        if (ms)
                         {
+                            auto& mesh = ms->meshes[dm.meshIndex];
+
                             int i = 0;
                             for (auto& geo : mesh.GetGeometrySpan())
                             {
-                                ImGui::ScopedID sid(i);
+                                ImGui::ScopedID sid(i++);
 
+                                ImGui::Indent();
+                                auto mat = assetManager.GetAsset<Assets::Material>(geo.materailHandle);
+
+                                if (mat && ImGui::TreeNode(mat->name.c_str()))
                                 {
-                                    auto mat = assetManager.GetAsset<Assets::Material>(geo.materailHandle);
-                                    if (mat)
+                                    ImGui::TreePop();
+
+                                    ImVec2 size = ImVec2(60) * scale;
+
+                                    if (ImGui::BeginTable("Materials", 2, ImGuiTableFlags_SizingFixedFit))
                                     {
-                                        //ImField::Field("Bace Color");
-                                        ImGui::ColorEdit4("Bace Color", &mat->baseColor.x);
-                                        ImGui::ColorEdit4("Emissive Color", &mat->emissiveColor.x);
-                                        ImGui::DragFloat("Emissive Exposure", &mat->emissiveEV);
+                                        ImGui::Indent();
+
+                                        ImField::Separator();
+                                        auto baseT = assetManager.GetAsset<Assets::Texture>(mat->baseTextureHandle);
+                                        if(ImField::ImageButton("Bace Texture", baseT ? baseT->texture.Get() : board.Get(), size)) HRay::Clear(rd);
+
+                                        TextureHandler(mat, mat->baseTextureHandle);
+                                        if(ImField::ColorEdit4("Bace Color", &mat->baseColor.x)) HRay::Clear(rd);
+
+                                        ImField::Separator();
+                                        auto normalT = assetManager.GetAsset<Assets::Texture>(mat->normalTextureHandle);
+                                        if(ImField::ImageButton("Normal Texture", normalT ? normalT->texture.Get() : board.Get(), size)) HRay::Clear(rd);
+                                        TextureHandler(mat, mat->normalTextureHandle);
+
+                                        ImField::Separator();
+                                        auto metallicRoughnessT = assetManager.GetAsset<Assets::Texture>(mat->metallicRoughnessTextureHandle);
+                                        if (ImField::ImageButton("Metallic Roughness Texture", metallicRoughnessT ? metallicRoughnessT->texture.Get() : board.Get(), size)) HRay::Clear(rd);
+                                        TextureHandler(mat, mat->metallicRoughnessTextureHandle);
+                                        if(ImField::DragFloat("Metallic", &mat->metallic, 0.01f, 0.0f, 1.0f)) HRay::Clear(rd);
+                                        if(ImField::DragFloat("Roughness", &mat->roughness, 0.01f, 0.0f, 1.0f)) HRay::Clear(rd);
+
+                                        ImField::Separator();
+                                        auto emissiveT = assetManager.GetAsset<Assets::Texture>(mat->emissiveTextureHandle);
+                                        if (ImField::ImageButton("Emissive Texture", emissiveT ? emissiveT->texture.Get() : board.Get(), size)) HRay::Clear(rd);
+                                        TextureHandler(mat, mat->emissiveTextureHandle);
+                                        if(ImField::ColorEdit3("Emissive Color", &mat->emissiveColor.x)) HRay::Clear(rd);
+                                        if(ImField::DragFloat("Emissive Exposure", &mat->emissiveEV, 0.01f)) HRay::Clear(rd);
+
+                                        ImField::Separator();
+                                        if(ImField::DragFloat2("Offset", &mat->offset.x, 0.01f)) HRay::Clear(rd);
+                                        if(ImField::DragFloat2("Scale", &mat->scale.x, 0.01f)) HRay::Clear(rd);
+                                        float deg = Math::degrees(mat->rotation);
+                                        if (ImField::DragFloat("Rotation", &deg, 0.1f)) HRay::Clear(rd);
+                                        mat->rotation = Math::radians(deg);
+
+                                        int selected = 0;
+                                        auto currentTypeStr = magic_enum::enum_name<Assets::UVSet>(mat->uvSet);
+                                        auto types = magic_enum::enum_names<Assets::UVSet>();
+                                        if (ImField::Combo("UV", types, currentTypeStr, selected))
+                                        {
+                                            mat->uvSet = magic_enum::enum_cast<Assets::UVSet>(types[selected]).value();
+                                            HRay::Clear(rd);
+                                        }
+
+                                        ImGui::Unindent();
+
+                                        ImGui::EndTable();
                                     }
-
-                                    //ImGui::TreePop();
                                 }
-                                i++;
+                                ImGui::Unindent();
                             }
-
-                            //ImGui::EndTable();
                         }
                     }
                     ImField::EndBlock();
+                }
+
+                if (selectedEntity.HasComponent<Assets::DirectionalLightComponent>())
+                {
+                    if (ImField::BeginBlock("Directional Light", Icon_Sun, lightColor))
+                    {
+                        auto& c = selectedEntity.GetComponent<Assets::DirectionalLightComponent>();
+                
+                        if (ImGui::BeginTable("Directional Light", 2, ImGuiTableFlags_SizingFixedFit))
+                        {
+                            if (ImField::ColorEdit3("Color", &c.color.x)) HRay::Clear(rd);
+                            if (ImField::DragFloat("Intensity", &c.intensity)) HRay::Clear(rd);
+                            if (ImField::DragFloat("AngularRadius", &c.angularRadius)) HRay::Clear(rd);
+                            if (ImField::DragFloat("HaloSize", &c.haloSize)) HRay::Clear(rd);
+                            if (ImField::DragFloat("HaloFalloff", &c.haloFalloff)) HRay::Clear(rd);
+                
+                            ImGui::EndTable();
+                        }
+                    }
+                    ImField::EndBlock();
+                }
+            }
+
+            if (selectedEntity)
+            {
+                ImGui::ScopedStyle wp(ImGuiStyleVar_WindowPadding, ImVec2(8, 8));
+                ImGui::ScopedStyle fp(ImGuiStyleVar_FramePadding, ImVec2(4, 4));
+
+                float x = ImGui::GetContentRegionAvail().x;
+                ImGui::Dummy({ x, 10 });
+
+                ImGui::ShiftCursorX(x * 0.2f);
+                if (ImGui::Button(Icon_Plus"  Add Component", { x * 0.6f, 0 }))
+                {
+                    ImGui::OpenPopup("AddComponent");
+                }
+
+                if (ImGui::BeginPopup("AddComponent"))
+                {
+                    DisplayAddComponentEntry<Assets::TransformComponent>(Icon_Transform"  TransForm");
+                    DisplayAddComponentEntry<Assets::MeshComponent>(Icon_Mesh"  Mesh");
+                    DisplayAddComponentEntry<Assets::DirectionalLightComponent>(Icon_Sun"  Directional Light");
+                    
+                    ImGui::EndPopup();
                 }
             }
         }
@@ -1082,6 +1296,13 @@ struct HRayApp : public Layer, public Assets::AssetEventCallback
             bool open = ImGui::TreeNodeEx(nc.name.c_str(), node_flags, "%s  %s", Icon_DICE, nc.name.c_str());
             if (ImGui::IsItemClicked())
                 selectedEntity = childEntity;
+
+            if (childEntity && ImGui::IsItemFocused() && ImGui::IsKeyDown(ImGuiKey::ImGuiKey_Delete))
+            {
+                Assets::Scene* scene = assetManager.GetAsset<Assets::Scene>(sceneHandle);
+                if (scene) scene->DestroyEntity(selectedEntity);
+                HRay::Clear(rd);
+            }
 
             if (open)
             {
@@ -1122,7 +1343,12 @@ struct HRayApp : public Layer, public Assets::AssetEventCallback
                 ImGui::ScopedStyle fp(ImGuiStyleVar_FramePadding, ImVec2(6, 6));
                 ImGui::BeginChild("Entities", ImVec2(ImGui::GetContentRegionAvail().x, 0), ImGuiChildFlags_AlwaysUseWindowPadding);
                 Assets::Scene* scene = assetManager.GetAsset<Assets::Scene>(sceneHandle);
-                if (scene) DrawHierarchy(scene->GetRootEntity(), scene);
+                if (scene)
+                {
+                    auto root = scene->GetRootEntity();
+                    DrawHierarchy(root, scene);
+                    ContextWindow(root);
+                }
                 ImGui::EndChild();
             }
         }
@@ -1371,6 +1597,7 @@ struct HRayApp : public Layer, public Assets::AssetEventCallback
                     ImField::Text("Instance Count", "%zd", rd.instanceCount);
                     ImField::Text("Material Count", "%zd", rd.materialCount);
                     ImField::Text("Texture Count", "%zd", rd.textureCount);
+                    ImField::Text("Directional Light Count", "%zd", rd.sceneInfo.directionalLightCount);
 
                     Assets::Scene* scene = assetManager.GetAsset<Assets::Scene>(sceneHandle);
                     if (scene)
@@ -1381,6 +1608,49 @@ struct HRayApp : public Layer, public Assets::AssetEventCallback
                         ImField::Text("mesh Component Count", "%zd", meshComponentCount);
                     }
 
+                    ImGui::EndTable();
+                }
+            }
+            ImField::EndBlock();
+        }
+
+        ImGui::End();
+    }
+
+    void RendererSettings()
+    {
+        HE_PROFILE_FUNCTION();
+
+        if (!enableRendererWindow)
+            return;
+
+        if (ImGui::Begin("Renderer", &enableRendererWindow))
+        {
+            auto cf = ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding;
+
+            ImGui::ScopedColor sc0(ImGuiCol_Header, ImVec4(0, 0, 0, 0));
+            ImGui::ScopedColor sc1(ImGuiCol_HeaderHovered, ImVec4(0, 0, 0, 0));
+            ImGui::ScopedColor sc2(ImGuiCol_HeaderActive, ImVec4(0, 0, 0, 0));
+
+            if (ImField::BeginBlock("Settings"))
+            {
+                if (ImGui::BeginTable("Renderer", 2, ImGuiTableFlags_SizingFixedFit))
+                {
+                    if(ImField::Checkbox("Enable Environment Light", &rd.sceneInfo.enableEnvironmentLight)) HRay::Clear(rd);
+                    if(ImField::ColorEdit4("Sky Colour Zenith", &rd.sceneInfo.skyColourZenith.x)) HRay::Clear(rd);
+                    if(ImField::ColorEdit4("Sky Colour Horizon", &rd.sceneInfo.skyColourHorizon.x)) HRay::Clear(rd);
+                    if(ImField::ColorEdit4("Ground Colour", &rd.sceneInfo.groundColour.x)) HRay::Clear(rd);
+                    if(ImField::DragInt("Max Lighte Bounces", &rd.sceneInfo.maxLighteBounces)) HRay::Clear(rd);
+                    if(ImField::DragInt("Max Samples", &rd.sceneInfo.maxSamples)) HRay::Clear(rd);
+                    if(ImField::DragFloat("Gamma", &rd.sceneInfo.gamma)) HRay::Clear(rd);
+                    if(ImField::DragFloat("Diverge Strength", &rd.sceneInfo.divergeStrength, 0.1f, 0.0f)) HRay::Clear(rd);
+                    if(ImField::DragFloat("Defocus Strength", &rd.sceneInfo.defocusStrength, 0.1f, 0.0f)) HRay::Clear(rd);
+                    if(ImField::DragFloat("Focus Dist", &rd.sceneInfo.focusDist, 0.1f, 0.0f)) HRay::Clear(rd);
+                    if(ImField::Checkbox("Enable Visual Focus Dist", &rd.sceneInfo.enableVisualFocusDist)) HRay::Clear(rd);
+                    if(ImField::DragFloat("min Distance", &rd.sceneInfo.minDistance, 0.1f, 0.0f)) HRay::Clear(rd);
+                    if(ImField::DragFloat("max Distance", &rd.sceneInfo.maxDistance, 0.1f, 0.0f)) HRay::Clear(rd);
+                    if(ImField::DragFloat("FOV", &editorCamera->view.fov, 0.1f, 0.0f)) HRay::Clear(rd);
+                  
                     ImGui::EndTable();
                 }
             }
@@ -1520,7 +1790,7 @@ struct HRayApp : public Layer, public Assets::AssetEventCallback
 
                 auto scene = assetManager.GetAsset<Assets::Scene>(sceneHandle);
                 HE_ASSERT(scene);
-               
+                HRay::Clear(rd);
                 Serialize();
             });
         }
@@ -1590,7 +1860,7 @@ struct HRayApp : public Layer, public Assets::AssetEventCallback
                 out << "\t\t\"enableInspectorWindow\" : " << (enableInspectorWindow ? "true" : "false") << ",\n";
                 out << "\t\t\"enableAssetManagerWindow\" : " << (enableAssetManagerWindow ? "true" : "false") << ",\n";
                 out << "\t\t\"enableApplicationWindow\" : " << (enableApplicationWindow ? "true" : "false") << ",\n";
-                out << "\t\t\"enableAdvancedMode\" : " << (enableAdvancedMode ? "true" : "false") << "\n";
+                out << "\t\t\"enableRendererWindow\" : " << (enableRendererWindow ? "true" : "false") << "\n";
             }
             out << "\t}\n";
         }
@@ -1726,8 +1996,8 @@ struct HRayApp : public Layer, public Assets::AssetEventCallback
             }
 
             {
-                auto enable = ui["enableAdvancedMode"];
-                if (!enable.error()) enableAdvancedMode = enable.get_bool().value();
+                auto enable = ui["enableRendererWindow"];
+                if (!enable.error()) enableRendererWindow = enable.get_bool().value();
             }
         }
 
@@ -1750,6 +2020,7 @@ HE::ApplicationContext* HE::CreateApplication(ApplicationCommandLineArgs args)
     //desc.deviceDesc.enableNvrhiValidationLayer = true;
 
     desc.deviceDesc.enableRayTracingExtensions = true;
+    desc.deviceDesc.enableComputeQueue = true;
     desc.deviceDesc.enableCopyQueue = true;
     desc.deviceDesc.api = {
         nvrhi::GraphicsAPI::D3D12,
@@ -1761,6 +2032,8 @@ HE::ApplicationContext* HE::CreateApplication(ApplicationCommandLineArgs args)
     desc.windowDesc.customTitlebar = true;
     desc.windowDesc.minWidth = 960;
     desc.windowDesc.minHeight = 540;
+    desc.windowDesc.maximized = true;
+    desc.windowDesc.swapChainDesc.swapChainFormat = nvrhi::Format::SRGBA8_UNORM;
 
     auto log = (FileSystem::GetAppDataPath(desc.windowDesc.title) / desc.windowDesc.title).string();
     desc.logFile = log.c_str();
