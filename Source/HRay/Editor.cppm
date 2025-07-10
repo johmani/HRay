@@ -490,6 +490,19 @@ export namespace Editor {
         std::unordered_map<std::string, std::function<Assets::Entity(Assets::Scene*, Assets::UUID)>> createEnityMapFucntions;
         Assets::AssetManager* am;
 
+        enum Primitive
+        {
+            Primitive_Capsule,
+            Primitive_Cone,
+            Primitive_Cube,
+            Primitive_Cylinder,
+            Primitive_IcoSphere,
+            Primitive_Plane,
+            Primitive_Suzanne,
+            Primitive_Torus,
+            Primitive_UVSphere
+        };
+
         void Init(Assets::AssetManager* assetManager)
         {
             am = assetManager;
@@ -508,9 +521,9 @@ export namespace Editor {
                 Assets::Entity newEntity = scene->CreateEntity(name, parent);
 
                 std::filesystem::path meshDirectory = std::filesystem::current_path() / "Resources" / "Meshes";
-                Assets::AssetHandle handle = am->GetOrMakeAsset(meshDirectory / "Plane.glb", "Editor/Meshes/Plane.glb");
+                Assets::AssetHandle handle = am->GetOrMakeAsset(meshDirectory / "Primitives.glb", "Editor/Meshes/Primitives.glb");
 
-                auto& dm = newEntity.AddComponent<Assets::MeshComponent>(handle, 0);
+                auto& dm = newEntity.AddComponent<Assets::MeshComponent>(handle, Primitive_Plane);
 
                 return newEntity;
             };
@@ -521,9 +534,9 @@ export namespace Editor {
                 Assets::Entity newEntity = scene->CreateEntity(name, parent);
 
                 std::filesystem::path meshDirectory = std::filesystem::current_path() / "Resources" / "Meshes";
-                Assets::AssetHandle handle = am->GetOrMakeAsset(meshDirectory / "Cube.glb", "Editor/Meshes/Cube.glb");
+                Assets::AssetHandle handle = am->GetOrMakeAsset(meshDirectory / "Primitives.glb", "Editor/Meshes/Primitives.glb");
 
-                auto& dm = newEntity.AddComponent<Assets::MeshComponent>(handle, 0);
+                auto& dm = newEntity.AddComponent<Assets::MeshComponent>(handle, Primitive_Cube);
 
                 return newEntity;
             };
@@ -534,9 +547,9 @@ export namespace Editor {
                 Assets::Entity newEntity = scene->CreateEntity(name, parent);
 
                 std::filesystem::path meshDirectory = std::filesystem::current_path() / "Resources" / "Meshes";
-                Assets::AssetHandle handle = am->GetOrMakeAsset(meshDirectory / "Capsule.glb", "Editor/Meshes/Capsule.glb");
+                Assets::AssetHandle handle = am->GetOrMakeAsset(meshDirectory / "Primitives.glb", "Editor/Meshes/Primitives.glb");
 
-                auto& dm = newEntity.AddComponent<Assets::MeshComponent>(handle, 0);
+                auto& dm = newEntity.AddComponent<Assets::MeshComponent>(handle, Primitive_Capsule);
                 
                 return newEntity;
             };
@@ -547,9 +560,9 @@ export namespace Editor {
                 Assets::Entity newEntity = scene->CreateEntity(name, parent);
 
                 std::filesystem::path meshDirectory = std::filesystem::current_path() / "Resources" / "Meshes";
-                Assets::AssetHandle handle = am->GetOrMakeAsset(meshDirectory / "UVSphere.glb", "Editor/Meshes/UVSphere.glb");
+                Assets::AssetHandle handle = am->GetOrMakeAsset(meshDirectory / "Primitives.glb", "Editor/Meshes/Primitives.glb");
 
-                auto& dm = newEntity.AddComponent<Assets::MeshComponent>(handle, 0);
+                auto& dm = newEntity.AddComponent<Assets::MeshComponent>(handle, Primitive_UVSphere);
 
                 return newEntity;
             };
@@ -560,9 +573,9 @@ export namespace Editor {
                 Assets::Entity newEntity = scene->CreateEntity(name, parent);
 
                 std::filesystem::path meshDirectory = std::filesystem::current_path() / "Resources" / "Meshes";
-                Assets::AssetHandle handle = am->GetOrMakeAsset(meshDirectory / "IcoSphere.glb", "Editor/Meshes/IcoSphere.glb");
+                Assets::AssetHandle handle = am->GetOrMakeAsset(meshDirectory / "Primitives.glb", "Editor/Meshes/Primitives.glb");
 
-                auto& dm = newEntity.AddComponent<Assets::MeshComponent>(handle, 0);
+                auto& dm = newEntity.AddComponent<Assets::MeshComponent>(handle, Primitive_IcoSphere);
 
                 return newEntity;
             };
@@ -573,9 +586,9 @@ export namespace Editor {
                 Assets::Entity newEntity = scene->CreateEntity(name, parent);
 
                 std::filesystem::path meshDirectory = std::filesystem::current_path() / "Resources" / "Meshes";
-                Assets::AssetHandle handle = am->GetOrMakeAsset(meshDirectory / "Cylinder.glb", "Editor/Meshes/Cylinder.glb");
+                Assets::AssetHandle handle = am->GetOrMakeAsset(meshDirectory / "Primitives.glb", "Editor/Meshes/Primitives.glb");
 
-                auto& dm = newEntity.AddComponent<Assets::MeshComponent>(handle, 0);
+                auto& dm = newEntity.AddComponent<Assets::MeshComponent>(handle, Primitive_Cylinder);
 
                 return newEntity;
             };
@@ -586,9 +599,9 @@ export namespace Editor {
                 Assets::Entity newEntity = scene->CreateEntity(name, parent);
 
                 std::filesystem::path meshDirectory = std::filesystem::current_path() / "Resources" / "Meshes";
-                Assets::AssetHandle handle = am->GetOrMakeAsset(meshDirectory / "Cone.glb", "Editor/Meshes/Cone.glb");
+                Assets::AssetHandle handle = am->GetOrMakeAsset(meshDirectory / "Primitives.glb", "Editor/Meshes/Primitives.glb");
 
-                auto& dm = newEntity.AddComponent<Assets::MeshComponent>(handle, 0);
+                auto& dm = newEntity.AddComponent<Assets::MeshComponent>(handle, Primitive_Cone);
 
                 return newEntity;
             };
@@ -599,9 +612,9 @@ export namespace Editor {
                 Assets::Entity newEntity = scene->CreateEntity(name, parent);
 
                 std::filesystem::path meshDirectory = std::filesystem::current_path() / "Resources" / "Meshes";
-                Assets::AssetHandle handle = am->GetOrMakeAsset(meshDirectory / "Torus.glb", "Editor/Meshes/Torus.glb");
+                Assets::AssetHandle handle = am->GetOrMakeAsset(meshDirectory / "Primitives.glb", "Editor/Meshes/Primitives.glb");
 
-                auto& dm = newEntity.AddComponent<Assets::MeshComponent>(handle, 0);
+                auto& dm = newEntity.AddComponent<Assets::MeshComponent>(handle, Primitive_Torus);
                
                 return newEntity;
             };
@@ -612,10 +625,9 @@ export namespace Editor {
                 Assets::Entity newEntity = scene->CreateEntity(name, parent);
 
                 std::filesystem::path meshDirectory = std::filesystem::current_path() / "Resources" / "Meshes";
-                Assets::AssetHandle handle = am->GetOrMakeAsset(meshDirectory / "Suzanne.glb", "Editor/Meshes/Suzanne.glb");
+                Assets::AssetHandle handle = am->GetOrMakeAsset(meshDirectory / "Primitives.glb", "Editor/Meshes/Primitives.glb");
 
-                auto& dm = newEntity.AddComponent<Assets::MeshComponent>(handle, 0);
-               
+                auto& dm = newEntity.AddComponent<Assets::MeshComponent>(handle, Primitive_Suzanne);
 
                 return newEntity;
             };
