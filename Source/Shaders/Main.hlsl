@@ -1,44 +1,54 @@
 ﻿#include "Base.hlsli"
-//#include "Sky.hlsli"
 
 struct SceneInfo
 {
-    // View
-    float4x4 worldToView;
-    float4x4 viewToClip;
-    float4x4 clipToWorld;
+    struct View
+    {
+        float4x4 worldToView;
+        float4x4 viewToClip;
+        float4x4 clipToWorld;
 
-    float3 cameraPosition;
-    int frameIndex;
+        float3 cameraPosition;
+        int frameIndex;
 
-    float2 viewSize;
-    float2 viewSizeInv;
-    
-    float minDistance;
-    float maxDistance;
-    float divergeStrength;
-    float defocusStrength;
-    
-    float focusDist;
-    float fov;
-    float2 padding0;
+        float2 viewSize;
+        float2 viewSizeInv;
 
-    // Light
-    float4 groundColour;
-    float4 skyColourHorizon;
-    float4 skyColourZenith;
+        float minDistance;
+        float maxDistance;
+        float apertureRadius;
+        float focusFalloff;
 
-    // Settings
-    int directionalLightCount;
-    int maxLighteBounces;
-    float2 padding1;
+        float focusDistance;
+        float fov;
+        float2 padding0;
 
-    int maxSamples;
-    float gamma;
-    float2 padding2;
+        bool enableVisualFocusDistance;
+        bool enableDepthOfField;
+        float2 padding1;
 
-    bool enableEnvironmentLight;  // 4 bytes
-    bool enableVisualFocusDist;   // new 16-byte block start
+    } view;
+
+    struct Light
+    {
+        float4 groundColour;
+        float4 skyColourHorizon;
+        float4 skyColourZenith;
+
+        int directionalLightCount;
+        bool enableEnvironmentLight;  
+        float2 padding0;
+
+    } light;
+
+    struct Settings
+    {
+        int maxLighteBounces;
+        int maxSamples;
+        float gamma;
+        int padding0;
+
+    } settings;
 };
 
 struct GeometryData
@@ -111,13 +121,10 @@ typedef BuiltInTriangleIntersectionAttributes HitAttributes;
 
 struct HitInfo
 {
-    float4 color;            // rgb = surface color, a = continueBounce? (1 = yes, 0 = stop)
-    
+    float4 color;
     float3 emissiveColor;
-    
     float3 normal;
-    float dist;              // distance to hit point
-
+    float distance;
     float metallic;
     float roughness;
 };
@@ -230,12 +237,12 @@ RayDesc CreatePrimaryRay(float2 id, float4x4 clipToWorld, float3 cameraPosition,
 
 float3 EvaluateEnvironmentLight(float3 rayOrigin, float3 rayDirection)
 {
-    if (!sceneInfoBuffer.enableEnvironmentLight)
+    if (!sceneInfoBuffer.light.enableEnvironmentLight)
         return 0;
 
-    float3 skyColourHorizon = SRGBToLinear(sceneInfoBuffer.skyColourHorizon.rgb);
-    float3 skyColourZenith = SRGBToLinear(sceneInfoBuffer.skyColourZenith.rgb);
-    float3 groundColour = SRGBToLinear(sceneInfoBuffer.groundColour.rgb);
+    float3 skyColourHorizon = SRGBToLinear(sceneInfoBuffer.light.skyColourHorizon.rgb);
+    float3 skyColourZenith = SRGBToLinear(sceneInfoBuffer.light.skyColourZenith.rgb);
+    float3 groundColour = SRGBToLinear(sceneInfoBuffer.light.groundColour.rgb);
 
     float skyT = pow(smoothstep(0.0, 0.4, rayDirection.y), 0.35);
     float groundToSkyT = smoothstep(-0.01, 0.0, rayDirection.y);
@@ -244,7 +251,7 @@ float3 EvaluateEnvironmentLight(float3 rayOrigin, float3 rayDirection)
 
     float3 totalSunColor = 0;
 
-    for (int i = 0; i < sceneInfoBuffer.directionalLightCount; i++)
+    for (int i = 0; i < sceneInfoBuffer.light.directionalLightCount; i++)
     {
         DirectionalLightData light = directionalLightData[i];
 
@@ -271,45 +278,51 @@ float3 EvaluateEnvironmentLight(float3 rayOrigin, float3 rayDirection)
 void RayGen()
 {
     uint2 rayIndex       = DispatchRaysIndex().xy;
-    uint rngState        = rayIndex.y * (uint)sceneInfoBuffer.viewSize.x + rayIndex.x;
-    RayDesc primaryRay   = CreatePrimaryRay(float2(rayIndex), sceneInfoBuffer.clipToWorld, sceneInfoBuffer.cameraPosition, sceneInfoBuffer.viewSizeInv);
+    uint rngState        = rayIndex.y * (uint)sceneInfoBuffer.view.viewSize.x + rayIndex.x;
+    RayDesc primaryRay   = CreatePrimaryRay(float2(rayIndex), sceneInfoBuffer.view.clipToWorld, sceneInfoBuffer.view.cameraPosition, sceneInfoBuffer.view.viewSizeInv);
     float3 rayOrigin     = primaryRay.Origin;
     float3 rayDirection  = primaryRay.Direction;
 
-    float2 uv  = (float2(rayIndex) + 0.5) / sceneInfoBuffer.viewSize;
+    float2 uv  = (float2(rayIndex) + 0.5) / sceneInfoBuffer.view.viewSize;
     float2 ndc = uv * 2.0 - 1.0;
     ndc.y      = -ndc.y; // Flip Y for DX
 
-    float near = sceneInfoBuffer.minDistance;
-    float far  = sceneInfoBuffer.maxDistance;
+    float near = sceneInfoBuffer.view.minDistance;
+    float far  = sceneInfoBuffer.view.maxDistance;
     primaryRay.TMin = near;
     primaryRay.TMax = far;
 
     float3 right, up;
-    GetCameraRightUp(sceneInfoBuffer.clipToWorld, right, up);
-    float3 focalCenter = (sceneInfoBuffer.cameraPosition + normalize(cross(up, right)) * sceneInfoBuffer.focusDist);
-    float d = length(focalCenter - sceneInfoBuffer.cameraPosition);
-    float aspect = sceneInfoBuffer.viewSize.x / sceneInfoBuffer.viewSize.y;
-    float halfHeight = tan(sceneInfoBuffer.fov * 0.5) * sceneInfoBuffer.focusDist;
-    float halfWidth = halfHeight * aspect;
-    float3 offset = ndc.x * halfWidth * right + ndc.y * halfHeight * up;
-    float3 focusPoint = focalCenter + offset;
+    float3 focusPoint;
+    if(sceneInfoBuffer.view.enableDepthOfField)
+    {
+        GetCameraRightUp(sceneInfoBuffer.view.clipToWorld, right, up);
+        float3 focalCenter = (sceneInfoBuffer.view.cameraPosition + normalize(cross(up, right)) * sceneInfoBuffer.view.focusDistance);
+        float aspect = sceneInfoBuffer.view.viewSize.x / sceneInfoBuffer.view.viewSize.y;
+        float halfHeight = tan(sceneInfoBuffer.view.fov * 0.5) * sceneInfoBuffer.view.focusDistance;
+        float halfWidth = halfHeight * aspect;
+        float3 offset = ndc.x * halfWidth * right + ndc.y * halfHeight * up;
+        focusPoint = focalCenter + offset;
+    }
 
     float3 finalColor = 0;
 
-    for (uint i = 0; i < sceneInfoBuffer.maxSamples; i++)
+    for (uint i = 0; i < sceneInfoBuffer.settings.maxSamples; i++)
     {
-        rngState += (sceneInfoBuffer.frameIndex + i) * 895623;
-        float2 originOffset = RandomPointInCircle(rngState) * sceneInfoBuffer.defocusStrength / sceneInfoBuffer.viewSize.x;
-        float2 targetOffset   = RandomPointInCircle(rngState) * sceneInfoBuffer.divergeStrength / sceneInfoBuffer.viewSize.x;
+        rngState += (sceneInfoBuffer.view.frameIndex + i) * 895623;
+        float2 originOffset = RandomPointInCircle(rngState) * sceneInfoBuffer.view.focusFalloff / sceneInfoBuffer.view.viewSize.x;
+        float2 targetOffset   = RandomPointInCircle(rngState) * sceneInfoBuffer.view.apertureRadius / sceneInfoBuffer.view.viewSize.x;
         
-        rayOrigin = sceneInfoBuffer.cameraPosition + right * originOffset.x + up * originOffset.y;
-        rayDirection = normalize((focusPoint + right * targetOffset.x + up * targetOffset.y) - rayOrigin);
-        
+        if (sceneInfoBuffer.view.enableDepthOfField)
+        {
+            rayOrigin    = sceneInfoBuffer.view.cameraPosition + right * originOffset.x + up * originOffset.y;
+            rayDirection = normalize((focusPoint + right * targetOffset.x + up * targetOffset.y) - rayOrigin);
+        }
+
         float3 resultColor = float3(0, 0, 0);
-        float3 throughput = float3(1, 1, 1);
+        float3 throughput  = float3(1, 1, 1);
     
-        for (uint bounce = 0; bounce < sceneInfoBuffer.maxLighteBounces; bounce++)
+        for (uint bounce = 0; bounce < sceneInfoBuffer.settings.maxLighteBounces; bounce++)
         {
             RayDesc ray;
             ray.Origin    = rayOrigin;
@@ -321,12 +334,12 @@ void RayGen()
             //RAY_FLAG flags = RAY_FLAG_NONE;
             RAY_FLAG flags = RAY_FLAG_CULL_BACK_FACING_TRIANGLES;
             TraceRay(TLAS, flags, 0xFF, 0, 0, 0, ray, payload);
-            float3 hitPoint = rayOrigin + rayDirection * payload.dist;
+            float3 hitPoint = rayOrigin + rayDirection * payload.distance;
         
-            if (sceneInfoBuffer.enableVisualFocusDist && bounce == 0 && length(hitPoint - focusPoint) <= 0.2)
+            if (sceneInfoBuffer.view.enableVisualFocusDistance && bounce == 0 && length(hitPoint - focusPoint) <= 0.2)
                 resultColor = lerp(resultColor, float3(0, 1, 0), 0.1);
 
-            if (payload.dist < 1000)
+            if (payload.distance < 1000)
             {
                 rayOrigin = hitPoint + payload.normal * c_RayPosNormalOffset;
                 float3 diffuse = normalize(payload.normal + RandomDirection(rngState));
@@ -346,7 +359,7 @@ void RayGen()
         finalColor += resultColor;
     }
 
-    finalColor = finalColor / sceneInfoBuffer.maxSamples;
+    finalColor = finalColor / sceneInfoBuffer.settings.maxSamples;
     finalColor = LinearToSRGB(finalColor);
     renderTarget[rayIndex] = float4(finalColor, 1);
 }
@@ -408,11 +421,11 @@ void ClosestHit(inout HitInfo payload : SV_RayPayload, HitAttributes attr : SV_I
     payload.metallic      = metallic;
     payload.roughness     = roughness;
     payload.emissiveColor = emissiveColor;
-    payload.dist          = RayTCurrent();
+    payload.distance      = RayTCurrent();
 }
 
 [shader("miss")]
 void Miss(inout HitInfo payload : SV_RayPayload)
 {
-    payload.dist          = 1000;
+    payload.distance = 1000;
 }

@@ -307,7 +307,7 @@ void HRay::BeginScene(RendererData& data)
     data.geometryCount = 0;
     data.instanceCount = 0;
     data.materialCount = 0;
-    data.sceneInfo.directionalLightCount = 0;
+    data.sceneInfo.light.directionalLightCount = 0;
 
     {
         data.materials.clear();
@@ -338,14 +338,14 @@ void HRay::EndScene(RendererData& data, nvrhi::ICommandList* commandList, const 
 
     // SceneInfo
     {
-        data.sceneInfo.worldToView = viewDesc.view;
-        data.sceneInfo.viewToClip = viewDesc.projection;
-        data.sceneInfo.clipToWorld = Math::inverse(viewDesc.projection * viewDesc.view);
-        data.sceneInfo.cameraPosition = viewDesc.cameraPosition;
-        data.sceneInfo.viewSize = Math::float2(viewDesc.width, viewDesc.height);
-        data.sceneInfo.fov = Math::radians(viewDesc.fov);
-        data.sceneInfo.viewSizeInv = 1.0f / data.sceneInfo.viewSize;
-        data.sceneInfo.frameIndex = data.frameIndex;
+        data.sceneInfo.view.worldToView = viewDesc.view;
+        data.sceneInfo.view.viewToClip = viewDesc.projection;
+        data.sceneInfo.view.clipToWorld = Math::inverse(viewDesc.projection * viewDesc.view);
+        data.sceneInfo.view.cameraPosition = viewDesc.cameraPosition;
+        data.sceneInfo.view.viewSize = Math::float2(viewDesc.width, viewDesc.height);
+        data.sceneInfo.view.fov = Math::radians(viewDesc.fov);
+        data.sceneInfo.view.viewSizeInv = 1.0f / data.sceneInfo.view.viewSize;
+        data.sceneInfo.view.frameIndex = data.frameIndex;
 
         commandList->writeBuffer(data.sceneInfoBuffer, &data.sceneInfo, sizeof(SceneInfo));
     }
@@ -388,7 +388,7 @@ void HRay::EndScene(RendererData& data, nvrhi::ICommandList* commandList, const 
     commandList->writeBuffer(data.geometryBuffer, data.geometryData.data(), data.geometryCount * sizeof(GeometryData));
     commandList->writeBuffer(data.instanceBuffer, data.instanceData.data(), data.instanceCount * sizeof(InstanceData));
     commandList->writeBuffer(data.materialBuffer, data.materialData.data(), data.materialCount * sizeof(MaterialData));
-    commandList->writeBuffer(data.directionalLightBuffer, data.directionalLightData.data(), data.sceneInfo.directionalLightCount * sizeof(DirectionalLightData));
+    commandList->writeBuffer(data.directionalLightBuffer, data.directionalLightData.data(), data.sceneInfo.light.directionalLightCount * sizeof(DirectionalLightData));
     commandList->buildTopLevelAccelStruct(data.topLevelAS, data.instances.data(), data.instanceCount, nvrhi::rt::AccelStructBuildFlags::AllowEmptyInstances);
 
     nvrhi::rt::State state;
@@ -409,7 +409,7 @@ void HRay::EndScene(RendererData& data, nvrhi::ICommandList* commandList, const 
     commandList->setPushConstants(&frameIndex, sizeof(uint32_t));
     commandList->dispatch(viewDesc.width / 8, viewDesc.height / 8);
     
-    data.frameIndex += data.sceneInfo.maxSamples;
+    data.frameIndex += data.sceneInfo.settings.maxSamples;
     data.time = HE::Application::GetTime() - data.lastTime;
 }
 
@@ -654,10 +654,10 @@ void HRay::SubmitMesh(RendererData& data, Assets::Asset asset, Assets::Mesh& mes
 
 void HRay::SubmitDirectionalLight(RendererData& data, const Assets::DirectionalLightComponent& light, Math::float4x4 wt, nvrhi::ICommandList* cl)
 {
-    if (data.directionalLightData.size() <= data.sceneInfo.directionalLightCount)
+    if (data.directionalLightData.size() <= data.sceneInfo.light.directionalLightCount)
         CreateOrResizeDirectionalLightBuffer(data, (uint32_t)data.directionalLightData.size() * 2);
 
-    HRay::DirectionalLightData& l = data.directionalLightData[data.sceneInfo.directionalLightCount];
+    HRay::DirectionalLightData& l = data.directionalLightData[data.sceneInfo.light.directionalLightCount];
     l.color = light.color;
     l.intensity = light.intensity;
     l.angularRadius = light.angularRadius;
@@ -665,7 +665,7 @@ void HRay::SubmitDirectionalLight(RendererData& data, const Assets::DirectionalL
     l.haloFalloff = light.haloFalloff;
     l.direction = glm::normalize(glm::vec3(wt[2]));
 
-    data.sceneInfo.directionalLightCount++;
+    data.sceneInfo.light.directionalLightCount++;
 }
 
 void HRay::Clear(RendererData& data)

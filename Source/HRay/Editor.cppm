@@ -52,6 +52,7 @@ export namespace Editor {
         float distance = 5.0f;
         Math::float3 focalPoint = { 0.0f, 0.0f, 0.0f };
         Math::float2 initialMousePosition = { 0.0f, 0.0f };
+        bool overrideTransform = false;
 
         OrbitCamera() = default;
         OrbitCamera(float fov, float aspectRatio, float near, float far)
@@ -110,7 +111,9 @@ export namespace Editor {
                 UpdateView();
             }
 
-            transform.position = focalPoint + transform.GetForward() * distance;
+            if(!overrideTransform)
+                transform.position = focalPoint + transform.GetForward() * distance;
+            
             UpdateView();
         }
 
@@ -515,6 +518,15 @@ export namespace Editor {
                 return newEntity;
             };
 
+            auto Camera = [this](Assets::Scene* scene, Assets::UUID parent) -> Assets::Entity {
+
+                std::string name = GetIncrementedReletiveEntityName(scene, "Camera", scene->FindEntity(parent));
+                Assets::Entity newEntity = scene->CreateEntity(name, parent);
+                auto& cc = newEntity.AddComponent<Assets::CameraComponent>();
+
+                return newEntity;
+            };
+
             auto PlaneMesh = [this](Assets::Scene* scene, Assets::UUID parent) -> Assets::Entity {
 
                 std::string name = GetIncrementedReletiveEntityName(scene, "Plane", scene->FindEntity(parent));
@@ -676,6 +688,7 @@ export namespace Editor {
             createEnityMapFucntions = {
 
                 { "Empty"                , Empty },
+                { "Camera"               , Camera},
                 { "Mesh/Plane"           , PlaneMesh },
                 { "Mesh/Cube"            , CubeMesh },
                 { "Mesh/Capsule"         , CapsuleMesh },
@@ -767,4 +780,93 @@ export namespace Editor {
             return GetIncrementedReletiveEntityName(scene, result, parent); // keep Incrementing the number
         }
     };
+
+    void Save(
+        nvrhi::IDevice* device,
+        nvrhi::ITexture* texture,
+        const std::string& directory,
+        uint32_t frameIndex
+    )
+    {
+        if (!std::filesystem::exists(directory))
+        {
+            HE_ERROR("Invalid Path {}", directory);
+            return;
+        }
+
+        auto filePath = std::format("{}/{}.png", directory, frameIndex);
+
+        auto textureState = nvrhi::ResourceStates::UnorderedAccess;
+        const nvrhi::TextureDesc& desc = texture->getDesc();
+
+        auto commandList = device->createCommandList({ .enableImmediateExecution = true });
+        commandList->open();
+
+        if (textureState != nvrhi::ResourceStates::Unknown)
+        {
+            commandList->beginTrackingTextureState(texture, nvrhi::TextureSubresourceSet(0, 1, 0, 1), textureState);
+        }
+
+        nvrhi::StagingTextureHandle stagingTexture = device->createStagingTexture(desc, nvrhi::CpuAccessMode::Read);
+        HE_VERIFY(stagingTexture);
+
+        commandList->copyTexture(stagingTexture, nvrhi::TextureSlice(), texture, nvrhi::TextureSlice());
+
+        if (textureState != nvrhi::ResourceStates::Unknown)
+        {
+            commandList->setTextureState(texture, nvrhi::TextureSubresourceSet(0, 1, 0, 1), textureState);
+            commandList->commitBarriers();
+        }
+
+        commandList->close();
+        device->executeCommandList(commandList);
+
+        HE::Jops::SubmitTask([device, filePath, desc, stagingTexture]() {
+            
+            size_t rowPitch = 0;
+            void* pData = device->mapStagingTexture(stagingTexture, nvrhi::TextureSlice(), nvrhi::CpuAccessMode::Read, &rowPitch);
+            HE_VERIFY(pData);
+
+            const auto& texDesc = stagingTexture->getDesc();
+            uint32_t width = texDesc.width;
+            uint32_t height = texDesc.height;
+
+            if (texDesc.format != nvrhi::Format::RGBA16_UNORM) 
+            {
+                HE_ERROR("Texture format is not RGBA16_UNORM");
+                device->unmapStagingTexture(stagingTexture);
+                return;
+            }
+
+            std::vector<uint8_t> rgba8Data(width * height * 4); // 4 bytes per pixel (RGBA8)
+            const uint16_t* src = (const uint16_t*)pData;
+            for (uint32_t y = 0; y < height; y++)
+            {
+                const uint16_t* rowSrc = src + (y * rowPitch / sizeof(uint16_t));
+                for (uint32_t x = 0; x < width; x++)
+                {
+                    uint32_t pixelIdx = (y * width + x) * 4;
+                    float gamma = 2.2f;
+                    float invGamma = 1.0f / gamma;
+                    rgba8Data[pixelIdx + 0] = (uint8_t)(255.0f * pow((float)rowSrc[x * 4 + 0] / 65535.0f, invGamma)); // R
+                    rgba8Data[pixelIdx + 1] = (uint8_t)(255.0f * pow((float)rowSrc[x * 4 + 1] / 65535.0f, invGamma)); // G
+                    rgba8Data[pixelIdx + 2] = (uint8_t)(255.0f * pow((float)rowSrc[x * 4 + 2] / 65535.0f, invGamma)); // B
+                    rgba8Data[pixelIdx + 3] = (uint8_t)(rowSrc[x * 4 + 3] >> 8);                                      // A
+                }
+            }
+
+            // Write to PNG file
+            int result = HE::Image::SaveAsPNG(filePath.c_str(), width, height, 4, rgba8Data.data(), width * 4);
+            if (!result) 
+            {
+                HE_ERROR("Failed to write PNG file: {}", filePath);
+            }
+            else 
+            {
+                HE_INFO("Successfully wrote PNG file: {}", filePath);
+            }
+           
+            device->unmapStagingTexture(stagingTexture);
+        });
+    }
 }

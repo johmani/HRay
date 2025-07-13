@@ -36,6 +36,12 @@ struct Color {
 
         ChildBlock,
 
+        Mesh,
+        Transform,
+        Light,
+        Material,
+        Camera,
+
         Count
     };
 };
@@ -101,17 +107,36 @@ struct Project
     std::filesystem::path assetsDir;
 };
 
+enum class SceneMode
+{
+    Editor,
+    Runtime,
+};
+
+struct Animation
+{
+    enum State
+    {
+        None      = BIT(0),
+        Forward   = BIT(1),
+        Back      = BIT(2),
+        Animating = Forward | Back,
+    } state;
+
+    float t = 0.0f;
+    float duration = 0.2f;
+
+    Math::float3 startPosition;
+    Math::quat   startRotation;
+
+    Math::float3 endPosition;
+    Math::quat   endRotation;
+};
+
 struct HRayApp : public Layer, public Assets::AssetEventCallback
 {
-    // UI
     ImVec4 colors[Color::Count];
-    ImVec4 meshColor = { 0.1f, 0.7f, 9.0f, 1.0f };
-    ImVec4 transformColor = { 0.9f, 0.7f, 0.1f, 1.0f };
-    ImVec4 lightColor = { 0.9f, 0.7f, 0.1f, 1.0f };
-    ImVec4 materialColor = { 0.9f, 0.5f, 0.8f, 1.0f };
-    ImVec4 cameraColor = { 0.7f, 0.1f, 0.9f, 1.0f };
 
-    // App
     Ref<Editor::OrbitCamera> orbitCamera;
     Ref<Editor::FlyCamera> flyCamera;
     Ref<Editor::EditorCamera> editorCamera;
@@ -127,18 +152,30 @@ struct HRayApp : public Layer, public Assets::AssetEventCallback
     bool enableHierarchyWindow = true;
     bool enableInspectorWindow = true;
     bool enableAssetManagerWindow = true;
-    bool enableApplicationWindow = true;
     bool enableRendererWindow = true;
     bool enableStartMenu = true;
     bool enableCreateNewProjectPopub = false;
     ImGuiTextFilter textFilter;
     Editor::EntityFactory entityFactory;
+    bool previewMode = false;
+    Animation cameraAnimation;
 
     std::string projectPath;
     std::string projectName;
     std::filesystem::path appData;
     std::filesystem::path keyBindingsFilePath;
     Project project;
+
+    Assets::AssetHandle tempSceneHandle;
+    std::string outputPath;
+    SceneMode sceneMode = SceneMode::Editor;
+    
+    int frameStart= 0;
+    int frameEnd= 50;
+    int frameIndex = 0;
+    int frameStep = 1;
+    int maxSamples = 1024;
+    uint32_t sampleCount = 0;
     
     Math::float3 cameraPrevPos;
     Math::quat cameraPrevRot;
@@ -215,14 +252,22 @@ struct HRayApp : public Layer, public Assets::AssetEventCallback
             colors[Color::PrimaryButton] = { 0.278431f, 0.447059f, 0.701961f, 1.00f };
             colors[Color::TextButtonHovered] = { 0.278431f, 0.447059f, 0.701961f, 1.00f };
             colors[Color::TextButtonActive] = { 0.278431f, 0.447059f, 0.801961f, 1.00f };
+            
             colors[Color::Dangerous] = { 0.8f, 0.3f, 0.2f, 1.0f };
             colors[Color::DangerousHovered] = { 0.9f, 0.2f, 0.2f, 1.0f };
             colors[Color::DangerousActive] = { 1.0f, 0.2f, 0.2f, 1.0f };
+            
             colors[Color::Info] = { 0.278431f, 0.701961f, 0.447059f, 1.00f };
             colors[Color::Warn] = { 0.8f, 0.8f, 0.2f, 1.0f };
             colors[Color::Error] = { 0.8f, 0.3f, 0.2f, 1.0f };
             colors[Color::ChildBlock] = { 0.1f,0.1f ,0.1f ,1.0f };
             colors[Color::Selected] = { 0.3f, 0.3f, 0.3f , 1.0f };
+
+            colors[Color::Mesh]      = { 0.1f, 0.7f, 9.0f, 1.0f };
+            colors[Color::Transform] = { 0.9f, 0.7f, 0.1f, 1.0f };
+            colors[Color::Light]     = { 0.9f, 0.7f, 0.1f, 1.0f };
+            colors[Color::Material]  = { 0.9f, 0.5f, 0.8f, 1.0f };
+            colors[Color::Camera]    = { 0.7f, 0.1f, 0.9f, 1.0f };
 
             std::string layoutPath = (appData / "layout.ini").lexically_normal().string();
             ImGui::GetIO().IniFilename = nullptr;
@@ -233,6 +278,9 @@ struct HRayApp : public Layer, public Assets::AssetEventCallback
     void OnDetach() override
     {
         HE_PROFILE_FUNCTION();
+
+        if (sceneMode == SceneMode::Runtime)
+            Stop();
 
         Serialize();
         assetManager.UnSubscribe(AssetEventCallbackHandle);
@@ -315,53 +363,173 @@ struct HRayApp : public Layer, public Assets::AssetEventCallback
             Assets::Scene* scene = assetManager.GetAsset<Assets::Scene>(sceneHandle);
             if (scene)
             {
-                HRay::BeginScene(rd);
-
+                Assets::Entity mainCameraEntity = GetSceneCamera(scene);
+                
+                if (sceneMode == SceneMode::Runtime)
                 {
-                    auto view = scene->registry.view<Assets::MeshComponent>();
-                    for (auto e : view)
+                    if ((int)frameIndex < frameEnd)
                     {
-                        Assets::Entity entity = { e, scene };
-                        auto& dm = entity.GetComponent<Assets::MeshComponent>();
-                        auto wt = entity.GetWorldSpaceTransformMatrix();
+                        Assets::CameraComponent* cc = nullptr;
+                        Math::float3 camPos = {};
+                        Math::float4x4 viewMatrix;
+                        Math::float4x4 projection;
 
-                        auto asset = assetManager.GetAsset(dm.meshSourceHandle);
-                        if (asset && asset.Has<Assets::MeshSource>() && asset.GetState() == Assets::AssetState::Loaded)
+                        if (mainCameraEntity)
                         {
-                            auto& meshSource = asset.Get<Assets::MeshSource>();
-                            auto& mesh = meshSource.meshes[dm.meshIndex];
+                            auto& c = mainCameraEntity.GetComponent<Assets::CameraComponent>();
+                            cc = &c;
 
-                            HRay::SubmitMesh(rd, asset, mesh, wt, commandList);
+                            auto wt = mainCameraEntity.GetWorldSpaceTransformMatrix();
+                            viewMatrix = Math::inverse(wt);
+
+                            Math::vec3 s, skew;
+                            Math::quat quaternion;
+                            Math::vec4 perspective;
+                            Math::decompose(wt, s, quaternion, camPos, skew, perspective);
+
+                            float aspectRatio = (float)width / (float)height;
+
+                            if (c.projectionType == Assets::CameraComponent::ProjectionType::Perspective)
+                            {
+                                projection = Math::perspective(glm::radians(c.perspectiveFieldOfView), aspectRatio, c.perspectiveNear, c.perspectiveFar);
+                            }
+                            else
+                            {
+                                float orthoLeft = -c.orthographicSize * aspectRatio * 0.5f;
+                                float orthoRight = c.orthographicSize * aspectRatio * 0.5f;
+                                float orthoBottom = -c.orthographicSize * 0.5f;
+                                float orthoTop = c.orthographicSize * 0.5f;
+                                projection = Math::ortho(orthoLeft, orthoRight, orthoBottom, orthoTop, c.orthographicNear, c.orthographicFar);
+                            }
+
+                            SetRendererToSceneCameraProp(c);
+                        }
+
+                        if (cc)
+                        {
+                            HRay::BeginScene(rd);
+
+                            {
+                                auto view = scene->registry.view<Assets::MeshComponent>();
+                                for (auto e : view)
+                                {
+                                    Assets::Entity entity = { e, scene };
+                                    auto& dm = entity.GetComponent<Assets::MeshComponent>();
+                                    auto wt = entity.GetWorldSpaceTransformMatrix();
+
+                                    auto asset = assetManager.GetAsset(dm.meshSourceHandle);
+                                    if (asset && asset.Has<Assets::MeshSource>() && asset.GetState() == Assets::AssetState::Loaded)
+                                    {
+                                        auto& meshSource = asset.Get<Assets::MeshSource>();
+                                        auto& mesh = meshSource.meshes[dm.meshIndex];
+                                        HRay::SubmitMesh(rd, asset, mesh, wt, commandList);
+                                    }
+                                }
+                            }
+
+                            {
+                                auto view = scene->registry.view<Assets::DirectionalLightComponent>();
+                                for (auto e : view)
+                                {
+                                    Assets::Entity entity = { e, scene };
+                                    auto& light = entity.GetComponent<Assets::DirectionalLightComponent>();
+                                    auto wt = entity.GetWorldSpaceTransformMatrix();
+
+                                    HRay::SubmitDirectionalLight(rd, light, wt, commandList);
+                                }
+                            }
+
+                            HRay::EndScene(rd, commandList, { viewMatrix, projection, camPos, cc->perspectiveFieldOfView, (uint32_t)width, (uint32_t)height });
+                        }
+
+                        sampleCount++;
+                        if (sampleCount == maxSamples)
+                        {
+                            for (int i = 0; i <= frameStep; i++)
+                                OnUpdateFrame();
+
+                            Editor::Save(device, rd.renderTarget, outputPath, frameIndex);
+
+                            sampleCount = 0;
+                            frameIndex += frameStep;
+
+                            HRay::Clear(rd);
+                            if (frameIndex >= frameEnd)
+                                Stop();
+                        }
+                    }
+                }
+                else
+                {
+                    HRay::BeginScene(rd);
+
+                    {
+                        auto view = scene->registry.view<Assets::MeshComponent>();
+                        for (auto e : view)
+                        {
+                            Assets::Entity entity = { e, scene };
+                            auto& dm = entity.GetComponent<Assets::MeshComponent>();
+                            auto wt = entity.GetWorldSpaceTransformMatrix();
+
+                            auto asset = assetManager.GetAsset(dm.meshSourceHandle);
+                            if (asset && asset.Has<Assets::MeshSource>() && asset.GetState() == Assets::AssetState::Loaded)
+                            {
+                                auto& meshSource = asset.Get<Assets::MeshSource>();
+                                auto& mesh = meshSource.meshes[dm.meshIndex];
+
+                                HRay::SubmitMesh(rd, asset, mesh, wt, commandList);
+                            }
+                        }
+                    }
+
+                    {
+                        auto view = scene->registry.view<Assets::DirectionalLightComponent>();
+                        for (auto e : view)
+                        {
+                            Assets::Entity entity = { e, scene };
+                            auto& light = entity.GetComponent<Assets::DirectionalLightComponent>();
+                            auto wt = entity.GetWorldSpaceTransformMatrix();
+
+                            HRay::SubmitDirectionalLight(rd, light, wt, commandList);
+                        }
+                    }
+
+                    HRay::EndScene(rd, commandList, { editorCamera->view.view, editorCamera->view.projection , editorCamera->transform.position, editorCamera->view.fov, (uint32_t)width, (uint32_t)height });
+
+                    clearReq |= cameraPrevPos != editorCamera->transform.position || cameraPrevRot != editorCamera->transform.rotation;
+                    if (clearReq)
+                    {
+                        cameraPrevPos = editorCamera->transform.position;
+                        cameraPrevRot = editorCamera->transform.rotation;
+                        HRay::Clear(rd);
+                        clearReq = false;
+
+                        // stop preview when camera move
+                        if (previewMode && cameraAnimation.state & Animation::None)
+                        {
+                            if (std::dynamic_pointer_cast<Editor::OrbitCamera>(editorCamera))
+                            {
+                                orbitCamera->distance = 0.0f;
+                                orbitCamera->focalPoint = editorCamera->transform.position;
+                            }
+
+                            StopPreview(false);
                         }
                     }
                 }
 
+                if (mainCameraEntity)
                 {
-                    auto view = scene->registry.view<Assets::DirectionalLightComponent>();
-                    for (auto e : view)
-                    {
-                        Assets::Entity entity = { e, scene };
-                        auto& light = entity.GetComponent<Assets::DirectionalLightComponent>();
-                        auto wt = entity.GetWorldSpaceTransformMatrix();
+                    if (previewMode)
+                        SetRendererToSceneCameraProp(mainCameraEntity.GetComponent<Assets::CameraComponent>());
 
-                        HRay::SubmitDirectionalLight(rd, light, wt, commandList);
-                    }
-                }
-              
-                HRay::EndScene(rd, commandList, { editorCamera->view.view, editorCamera->view.projection , editorCamera->transform.position, editorCamera->view.fov, (uint32_t)width, (uint32_t)height });
-
-                clearReq |= cameraPrevPos != editorCamera->transform.position || cameraPrevRot != editorCamera->transform.rotation;
-                if (clearReq)
-                {
-                    cameraPrevPos = editorCamera->transform.position;
-                    cameraPrevRot = editorCamera->transform.rotation;
-                    HRay::Clear(rd);
-                    clearReq = false;
+                    UpdateEditorCameraAnimation(scene, mainCameraEntity, info.ts);
                 }
             }
         }
 
         // Shortcuts
+        if(true)
         {
             HE_PROFILE_SCOPE("Shortcuts");
 
@@ -411,9 +579,6 @@ struct HRayApp : public Layer, public Assets::AssetEventCallback
                     enableAssetManagerWindow = enableAssetManagerWindow ? false : true;
 
                 if (Input::IsKeyDown(Key::LeftShift) && Input::IsKeyPressed(Key::D5))
-                    enableApplicationWindow = enableApplicationWindow ? false : true;
-
-                if (Input::IsKeyDown(Key::LeftShift) && Input::IsKeyPressed(Key::D6))
                     enableRendererWindow = enableRendererWindow ? false : true;
             }
 
@@ -438,16 +603,27 @@ struct HRayApp : public Layer, public Assets::AssetEventCallback
 
                     if (Input::IsKeyDown(Key::LeftControl) && Input::IsKeyReleased(Key::F))
                         FocusCamera();
+
+                    if (Input::IsKeyReleased(Key::KP0) && !(cameraAnimation.state & Animation::Animating) && sceneMode != SceneMode::Runtime)
+                    {
+                        if (previewMode)
+                            StopPreview();
+                        else 
+                            Preview();
+                    }
                 }
             }
 
-            if (Input::IsKeyDown(Key::LeftShift) && Input::IsKeyPressed(Key::N))
-                enableCreateNewProjectPopub = true;
-
-            if (Input::IsKeyDown(Key::LeftShift) && Input::IsKeyPressed(Key::O))
+            // Project
             {
-                auto file = FileDialog::OpenFile({ { "hray", "hray" } });
-                OpenProject(file);
+                if (Input::IsKeyDown(Key::LeftShift) && Input::IsKeyPressed(Key::N))
+                    enableCreateNewProjectPopub = true;
+
+                if (Input::IsKeyDown(Key::LeftShift) && Input::IsKeyPressed(Key::O))
+                {
+                    auto file = FileDialog::OpenFile({ { "hray", "hray" } });
+                    OpenProject(file);
+                }
             }
         }
 
@@ -576,14 +752,11 @@ struct HRayApp : public Layer, public Assets::AssetEventCallback
                     if (ImGui::MenuItem("Inspector", "Left Shift + 3", enableInspectorWindow))
                         enableInspectorWindow = enableInspectorWindow ? false : true;
 
-                    if (ImGui::MenuItem("Renderer", "Left Shift + 6", enableRendererWindow))
-                        enableRendererWindow = enableRendererWindow ? false : true;
-
                     if (ImGui::MenuItem("Asset Manager", "Left Shift + 4", enableAssetManagerWindow))
                         enableAssetManagerWindow = enableAssetManagerWindow ? false : true;
 
-                    if (ImGui::MenuItem("Application", "Left Shift + 5", enableApplicationWindow))
-                        enableApplicationWindow = enableApplicationWindow ? false : true;
+                    if (ImGui::MenuItem("Renderer", "Left Shift + 5", enableRendererWindow))
+                        enableRendererWindow = enableRendererWindow ? false : true;
 
                     ImGui::EndMenu();
                 }
@@ -666,12 +839,33 @@ struct HRayApp : public Layer, public Assets::AssetEventCallback
                         editorCamera->SetViewportSize(width, height);
                         editorCamera->OnUpdate(info.ts);
 
-                        if (rd.renderTarget)
+                        if (rd.renderTarget && useViewportSize)
                         {
-                            ImGui::Image(rd.renderTarget.Get(), ImVec2{ (float)size.x, (float)size.y });
+                            ImGui::Image(rd.renderTarget.Get(), ImVec2{ (float)w, (float)h });
+                        }
+                        else if(rd.renderTarget)
+                        {
+                            ImVec2 availableSize = { (float)w, (float)h };
+                            float imageWidth = (float)rd.renderTarget->getDesc().width;
+                            float imageHeight = (float)rd.renderTarget->getDesc().height;
+                            float imageAspect = imageWidth / imageHeight;
+
+                            ImVec2 drawSize = availableSize;
+                            float availAspect = availableSize.x / availableSize.y;
+                            if (availAspect > imageAspect)
+                                drawSize.x = availableSize.y * imageAspect;
+                            else
+                                drawSize.y = availableSize.x / imageAspect;
+
+                            ImVec2 cursorPos = ImGui::GetCursorPos();
+                            ImVec2 offset = (availableSize - drawSize) * 0.5f;
+                            ImGui::SetCursorPos(cursorPos + offset);
+
+                            ImGui::Image(rd.renderTarget.Get(), drawSize);
                         }
 
                         // transform Gizmo
+                        if(sceneMode == SceneMode::Editor)
                         {
                             viewportBounds[0] = { viewportMinRegion.x , viewportMinRegion.y };
                             viewportBounds[1] = { viewportMaxRegion.x , viewportMaxRegion.y };
@@ -730,6 +924,7 @@ struct HRayApp : public Layer, public Assets::AssetEventCallback
                         }
 
                         // Toolbar
+                        if (sceneMode == SceneMode::Editor)
                         {
                             ImGui::ScopedFont sf(FontType::Blod, FontSize::BodyMedium);
 
@@ -773,6 +968,7 @@ struct HRayApp : public Layer, public Assets::AssetEventCallback
                         }
 
                         // Axis Gizmo
+                        if (sceneMode == SceneMode::Editor)
                         {
                             static int location = 1;
                             Editor::BeginChildView("Axis Gizmo", location);
@@ -806,7 +1002,10 @@ struct HRayApp : public Layer, public Assets::AssetEventCallback
                             Editor::BeginChildView("Stats", location);
 
                             const auto& appStats = Application::GetStats();
-                            ImGui::Text("CPUMain %.2f ms | FPS %i | Sampels %i | Time %.2f s", appStats.CPUMainTime, appStats.FPS, rd.frameIndex, rd.time);
+                            if (sceneMode == SceneMode::Editor)
+                                ImGui::Text("CPUMain %.2f ms | FPS %i | Sampels %i | Time %.2f s", appStats.CPUMainTime, appStats.FPS, rd.frameIndex, rd.time);
+                            else
+                                ImGui::Text("CPUMain %.2f ms | FPS %i | Time %.2f s | Frame %i / %i | Sample %i / %i", appStats.CPUMainTime, appStats.FPS, rd.time, frameIndex, frameEnd, sampleCount, maxSamples);
 
                             Editor::EndChildView(location);
                         }
@@ -820,7 +1019,6 @@ struct HRayApp : public Layer, public Assets::AssetEventCallback
                 Inspector();
                 RendererSettings();
                 AssetManager();
-                Application();
             }
 
             if (enableCreateNewProjectPopub)
@@ -941,6 +1139,19 @@ struct HRayApp : public Layer, public Assets::AssetEventCallback
         device->executeCommandList(commandList);
     }
 
+    void OnUpdateFrame()
+    {
+#if 1
+        Assets::Scene* scene = assetManager.GetAsset<Assets::Scene>(sceneHandle);
+        auto e = scene->FindEntity("Knight");
+        if (e)
+        {
+            auto& r = e.GetTransform().rotation;
+            r += Math::float3(0, 1 * 0.02f, 0);
+        }
+#endif
+    }
+
     void ContextWindow(Assets::Entity parent)
     {
         ImGui::ScopedStyle wp(ImGuiStyleVar_WindowPadding, ImVec2(8, 8));
@@ -1059,7 +1270,7 @@ struct HRayApp : public Layer, public Assets::AssetEventCallback
                 ImGui::ScopedStyle fp(ImGuiStyleVar_FramePadding, ImVec2(4, 4));
 
                 {
-                    if (ImField::BeginBlock("Transform Component", Icon_Arros, transformColor))
+                    if (ImField::BeginBlock("Transform Component", Icon_Arros, colors[Color::Transform]))
                     {
                         if (ImGui::BeginTable("Transform Component", 2, ImGuiTableFlags_SizingFixedFit))
                         {
@@ -1103,9 +1314,60 @@ struct HRayApp : public Layer, public Assets::AssetEventCallback
                     ImField::EndBlock();
                 }
 
+                if (selectedEntity.HasComponent<Assets::CameraComponent>())
+                {
+                    if (ImField::BeginBlock("Camera", Icon_Camera, colors[Color::Camera]))
+                    {
+                        auto& c = selectedEntity.GetComponent<Assets::CameraComponent>();
+
+                        if (ImGui::BeginTable("Camera", 2, ImGuiTableFlags_SizingFixedFit))
+                        {
+                            {
+                                int selected = 0;
+                                auto currentTypeStr = magic_enum::enum_name<Assets::CameraComponent::ProjectionType>(c.projectionType);
+                                auto types = magic_enum::enum_names<Assets::CameraComponent::ProjectionType>();
+                                if (ImField::Combo("Projection Type", types, currentTypeStr, selected))
+                                {
+                                    c.projectionType = magic_enum::enum_cast<Assets::CameraComponent::ProjectionType>(types[selected]).value();
+                                    auto s = magic_enum::enum_name<Assets::CameraComponent::ProjectionType>(c.projectionType);
+                            
+                                    HE_TRACE("c.projectionType {}", s);
+                                    HRay::Clear(rd);
+                                }
+                            }
+
+                            if (ImField::Checkbox("Primary", &c.isPrimary)) HRay::Clear(rd);
+
+                            if (c.projectionType == Assets::CameraComponent::ProjectionType::Perspective)
+                            {
+                                if (ImField::DragFloat("Field Of View", &c.perspectiveFieldOfView)) HRay::Clear(rd);
+                                if (ImField::DragFloat("Near", &c.perspectiveNear)) HRay::Clear(rd);
+                                if (ImField::DragFloat("Far", &c.perspectiveFar)) HRay::Clear(rd);
+                            }
+
+                            //if (c.projectionType == Assets::CameraComponent::ProjectionType::Orthographic)
+                            //{
+                            //    if (ImField::DragFloat("Size", &c.orthographicSize)) HRay::Clear(rd);
+                            //    if (ImField::DragFloat("Near", &c.orthographicNear)) HRay::Clear(rd);
+                            //    if (ImField::DragFloat("Far", &c.orthographicFar)) HRay::Clear(rd);
+                            //}
+                           
+                            ImField::SeparatorText("Depth Of Field");
+                            if (ImField::Checkbox("Enabled", &c.depthOfField.enabled)) HRay::Clear(rd);
+                            if (ImField::Checkbox("Enable Visual Focus Dist", &c.depthOfField.enableVisualFocusDistance)) HRay::Clear(rd);                            
+                            if (ImField::DragFloat("Aperture Radius", &c.depthOfField.apertureRadius, 0.1f, 0.0f)) HRay::Clear(rd);
+                            if (ImField::DragFloat("Focus Falloff", &c.depthOfField.focusFalloff, 0.1f, 0.0f)) HRay::Clear(rd);
+                            if (ImField::DragFloat("Focus Distance", &c.depthOfField.focusDistance, 0.1f, 0.0f))  HRay::Clear(rd);
+
+                            ImGui::EndTable();
+                        }
+                    }
+                    ImField::EndBlock();
+                }
+
                 if (selectedEntity.HasComponent<Assets::MeshComponent>())
                 {
-                    if (ImField::BeginBlock("Mesh Component", Icon_Mesh, meshColor))
+                    if (ImField::BeginBlock("Mesh Component", Icon_Mesh, colors[Color::Mesh]))
                     {
                         auto& dm = selectedEntity.GetComponent<Assets::MeshComponent>();
                         auto ms = assetManager.GetAsset<Assets::MeshSource>(dm.meshSourceHandle);
@@ -1144,7 +1406,7 @@ struct HRayApp : public Layer, public Assets::AssetEventCallback
                     ImField::EndBlock();
 
 
-                    if (ImField::BeginBlock("Material Component", Icon_Palette, materialColor))
+                    if (ImField::BeginBlock("Material Component", Icon_Palette, colors[Color::Material]))
                     {
                         auto& dm = selectedEntity.GetComponent<Assets::MeshComponent>();
                         auto ms = assetManager.GetAsset<Assets::MeshSource>(dm.meshSourceHandle);
@@ -1226,7 +1488,7 @@ struct HRayApp : public Layer, public Assets::AssetEventCallback
 
                 if (selectedEntity.HasComponent<Assets::DirectionalLightComponent>())
                 {
-                    if (ImField::BeginBlock("Directional Light", Icon_Sun, lightColor))
+                    if (ImField::BeginBlock("Directional Light", Icon_Sun, colors[Color::Light]))
                     {
                         auto& c = selectedEntity.GetComponent<Assets::DirectionalLightComponent>();
                 
@@ -1264,6 +1526,7 @@ struct HRayApp : public Layer, public Assets::AssetEventCallback
                     DisplayAddComponentEntry<Assets::TransformComponent>(Icon_Transform"  TransForm");
                     DisplayAddComponentEntry<Assets::MeshComponent>(Icon_Mesh"  Mesh");
                     DisplayAddComponentEntry<Assets::DirectionalLightComponent>(Icon_Sun"  Directional Light");
+                    DisplayAddComponentEntry<Assets::CameraComponent>(Icon_Camera"  Camera");
                     
                     ImGui::EndPopup();
                 }
@@ -1346,8 +1609,11 @@ struct HRayApp : public Layer, public Assets::AssetEventCallback
                 if (scene)
                 {
                     auto root = scene->GetRootEntity();
-                    DrawHierarchy(root, scene);
-                    ContextWindow(root);
+                    if (root)
+                    {
+                        DrawHierarchy(root, scene);
+                        ContextWindow(root);
+                    }
                 }
                 ImGui::EndChild();
             }
@@ -1563,60 +1829,6 @@ struct HRayApp : public Layer, public Assets::AssetEventCallback
         ImGui::End();
     }
 
-    void Application()
-    {
-        HE_PROFILE_FUNCTION();
-
-        if (!enableApplicationWindow)
-            return;
-
-        if (ImGui::Begin("Application", &enableApplicationWindow))
-        {
-            auto cf = ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding;
-
-            ImGui::ScopedColor sc0(ImGuiCol_Header, ImVec4(0, 0, 0, 0));
-            ImGui::ScopedColor sc1(ImGuiCol_HeaderHovered, ImVec4(0, 0, 0, 0));
-            ImGui::ScopedColor sc2(ImGuiCol_HeaderActive, ImVec4(0, 0, 0, 0));
-
-            if (ImField::BeginBlock("Settings"))
-            {
-                if (ImGui::BeginTable("Scene", 2, ImGuiTableFlags_SizingFixedFit))
-                {
-                    ImField::Checkbox("VSync", &Application::GetWindow().swapChain->desc.vsync);
-
-                    ImGui::EndTable();
-                }
-            }
-            ImField::EndBlock();
-
-            if (ImField::BeginBlock("Stats"))
-            {
-                if (ImGui::BeginTable("Scene", 2, ImGuiTableFlags_SizingFixedFit))
-                {
-                    ImField::Text("Geometry Count", "%zd", rd.geometryCount);
-                    ImField::Text("Instance Count", "%zd", rd.instanceCount);
-                    ImField::Text("Material Count", "%zd", rd.materialCount);
-                    ImField::Text("Texture Count", "%zd", rd.textureCount);
-                    ImField::Text("Directional Light Count", "%zd", rd.sceneInfo.directionalLightCount);
-
-                    Assets::Scene* scene = assetManager.GetAsset<Assets::Scene>(sceneHandle);
-                    if (scene)
-                    {
-                        auto transformComponentCount = scene->registry.view<Assets::TransformComponent>().size();
-                        auto meshComponentCount = scene->registry.view<Assets::MeshComponent>().size();
-                        ImField::Text("transform Component Count", "%zd", transformComponentCount);
-                        ImField::Text("mesh Component Count", "%zd", meshComponentCount);
-                    }
-
-                    ImGui::EndTable();
-                }
-            }
-            ImField::EndBlock();
-        }
-
-        ImGui::End();
-    }
-
     void RendererSettings()
     {
         HE_PROFILE_FUNCTION();
@@ -1634,23 +1846,148 @@ struct HRayApp : public Layer, public Assets::AssetEventCallback
 
             if (ImField::BeginBlock("Settings"))
             {
-                if (ImGui::BeginTable("Renderer", 2, ImGuiTableFlags_SizingFixedFit))
+                if (ImGui::BeginTable("Settings", 2, ImGuiTableFlags_SizingFixedFit))
                 {
-                    if(ImField::Checkbox("Enable Environment Light", &rd.sceneInfo.enableEnvironmentLight)) HRay::Clear(rd);
-                    if(ImField::ColorEdit4("Sky Colour Zenith", &rd.sceneInfo.skyColourZenith.x)) HRay::Clear(rd);
-                    if(ImField::ColorEdit4("Sky Colour Horizon", &rd.sceneInfo.skyColourHorizon.x)) HRay::Clear(rd);
-                    if(ImField::ColorEdit4("Ground Colour", &rd.sceneInfo.groundColour.x)) HRay::Clear(rd);
-                    if(ImField::DragInt("Max Lighte Bounces", &rd.sceneInfo.maxLighteBounces)) HRay::Clear(rd);
-                    if(ImField::DragInt("Max Samples", &rd.sceneInfo.maxSamples)) HRay::Clear(rd);
-                    if(ImField::DragFloat("Gamma", &rd.sceneInfo.gamma)) HRay::Clear(rd);
-                    if(ImField::DragFloat("Diverge Strength", &rd.sceneInfo.divergeStrength, 0.1f, 0.0f)) HRay::Clear(rd);
-                    if(ImField::DragFloat("Defocus Strength", &rd.sceneInfo.defocusStrength, 0.1f, 0.0f)) HRay::Clear(rd);
-                    if(ImField::DragFloat("Focus Dist", &rd.sceneInfo.focusDist, 0.1f, 0.0f)) HRay::Clear(rd);
-                    if(ImField::Checkbox("Enable Visual Focus Dist", &rd.sceneInfo.enableVisualFocusDist)) HRay::Clear(rd);
-                    if(ImField::DragFloat("min Distance", &rd.sceneInfo.minDistance, 0.1f, 0.0f)) HRay::Clear(rd);
-                    if(ImField::DragFloat("max Distance", &rd.sceneInfo.maxDistance, 0.1f, 0.0f)) HRay::Clear(rd);
-                    if(ImField::DragFloat("FOV", &editorCamera->view.fov, 0.1f, 0.0f)) HRay::Clear(rd);
-                  
+                    ImField::Checkbox("VSync", &Application::GetWindow().swapChain->desc.vsync);
+
+                    if(ImField::Checkbox("Enable Environment Light", &rd.sceneInfo.light.enableEnvironmentLight)) HRay::Clear(rd);
+                    if(ImField::ColorEdit4("Sky Colour Zenith", &rd.sceneInfo.light.skyColourZenith.x)) HRay::Clear(rd);
+                    if(ImField::ColorEdit4("Sky Colour Horizon", &rd.sceneInfo.light.skyColourHorizon.x)) HRay::Clear(rd);
+                    if(ImField::ColorEdit4("Ground Colour", &rd.sceneInfo.light.groundColour.x)) HRay::Clear(rd);
+                    
+                    if(ImField::DragInt("Max Lighte Bounces", &rd.sceneInfo.settings.maxLighteBounces)) HRay::Clear(rd);
+                    if(ImField::DragInt("Max Samples", &rd.sceneInfo.settings.maxSamples)) HRay::Clear(rd);
+                    if(ImField::DragFloat("Gamma", &rd.sceneInfo.settings.gamma)) HRay::Clear(rd);
+
+                    ImGui::EndTable();
+                }
+            }
+            ImField::EndBlock();
+
+            if (ImField::BeginBlock("Output"))
+            {
+                if (ImGui::BeginTable("Output", 2, ImGuiTableFlags_SizingFixedFit))
+                {
+                    if (ImField::Checkbox("Use Viewport Size", &useViewportSize)) HRay::Clear(rd);
+                    if (ImField::DragInt("Width", &width)) HRay::Clear(rd);
+                    if (ImField::DragInt("Height", &height)) HRay::Clear(rd);
+
+                    ImField::DragInt("Frame Start", &frameStart);
+                    ImField::DragInt("Frame End", &frameEnd);
+                    ImField::DragInt("Frame Step", &frameStep);
+                    ImField::DragInt("Max Samples", &maxSamples);
+
+                    ImGui::EndTable();
+                }
+
+                {
+                    ImGui::Indent(8);
+
+                    {
+                        ImGui::ScopedStyle fp(ImGuiStyleVar_FramePadding, ImVec2(4, 4));
+
+                        {
+                            ImGui::ScopedFont sf(FontType::Blod);
+                            ImGui::TextUnformatted("Output Path");
+                        }
+                        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 50);
+
+                        bool validPath = std::filesystem::exists(outputPath);
+
+                        if (!validPath) ImGui::PushStyleColor(ImGuiCol_Text, colors[Color::Error]);
+                        ImGui::InputTextWithHint("##outputPath", "Output Path", &outputPath);
+                        if (!validPath) ImGui::PopStyleColor();
+
+                        ImGui::SameLine(0, 4);
+                        if (ImGui::Button(Icon_Folder, { -1, 0 }))
+                        {
+                            auto path = FileDialog::SelectFolder().string();
+                            if (!path.empty())
+                                outputPath = path;
+                        }
+                    }
+
+                    if (!previewMode)
+                    {
+                        const char* state = sceneMode == SceneMode::Runtime ? "Cancel" : "Render";
+                        ImGui::ScopedColorStack sc(
+                            ImGuiCol_Button,        sceneMode == SceneMode::Runtime ? colors[Color::Dangerous      ]  : ImGui::GetStyle().Colors[ImGuiCol_Button],
+                            ImGuiCol_ButtonActive,  sceneMode == SceneMode::Runtime ? colors[Color::DangerousActive]  : ImGui::GetStyle().Colors[ImGuiCol_ButtonActive],
+                            ImGuiCol_ButtonHovered, sceneMode == SceneMode::Runtime ? colors[Color::DangerousHovered] : ImGui::GetStyle().Colors[ImGuiCol_ButtonHovered]
+                        );
+
+                        ImGui::ScopedDisabled sd(cameraAnimation.state & Animation::Animating);
+                        if (ImGui::Button(state, { sceneMode == SceneMode::Runtime ? -1 : ImGui::GetContentRegionAvail().x/2 , 0}))
+                        {
+                            if (sceneMode == SceneMode::Runtime)
+                                Stop();
+                            else
+                                Animate();
+                        }
+                    }
+
+                    if(!previewMode && sceneMode != SceneMode::Runtime) ImGui::SameLine();
+                    
+                    if(sceneMode != SceneMode::Runtime)
+                    {
+                        const char* state = previewMode ? "Stop" : "Preview";
+                        ImGui::ScopedColorStack sc(
+                            ImGuiCol_Button, previewMode ? colors[Color::Dangerous] : ImGui::GetStyle().Colors[ImGuiCol_Button],
+                            ImGuiCol_ButtonActive, previewMode ? colors[Color::DangerousActive] : ImGui::GetStyle().Colors[ImGuiCol_ButtonActive],
+                            ImGuiCol_ButtonHovered, previewMode ? colors[Color::DangerousHovered] : ImGui::GetStyle().Colors[ImGuiCol_ButtonHovered]
+                        );
+
+                        ImGui::ScopedDisabled sd(cameraAnimation.state & Animation::Animating);
+                        if (ImGui::Button(state, { -1, 0 }))
+                        {
+                            if (previewMode)
+                                StopPreview();
+                            else
+                                Preview();
+                        }
+                    }
+
+                    if (sceneMode == SceneMode::Runtime)
+                    {
+                        ImGui::ScopedColor sc(ImGuiCol_PlotHistogram, colors[Color::Info]);
+                        
+                        float frameProgress = (float)frameIndex / (float)frameEnd;
+                        float sampleProgress = (float)sampleCount / (float)maxSamples;
+                        float combinedProgress = (frameProgress + sampleProgress / frameEnd);
+                        
+                        std::string overlay = std::format("Scene {:>3.0f}%  |  Frame {:>3.0f}%", combinedProgress * 100.0f, sampleProgress * 100.0f);
+                        ImGui::ProgressBar(combinedProgress, ImVec2(-1, 0), overlay.c_str());
+                    }
+
+                    ImGui::Unindent(8);
+                }
+            }
+            ImField::EndBlock();
+
+            if (ImField::BeginBlock("Stats"))
+            {
+                if (ImGui::BeginTable("Scene", 2, ImGuiTableFlags_SizingFixedFit))
+                {
+                    ImField::Text("Geometry Count", "%zd", rd.geometryCount);
+                    ImField::Text("Instance Count", "%zd", rd.instanceCount);
+                    ImField::Text("Material Count", "%zd", rd.materialCount);
+                    ImField::Text("Texture Count", "%zd", rd.textureCount);
+                    ImField::Text("Directional Light Count", "%zd", rd.sceneInfo.light.directionalLightCount);
+
+                    Assets::Scene* scene = assetManager.GetAsset<Assets::Scene>(sceneHandle);
+                    if (scene)
+                    {
+                        auto transformComponentCount = scene->registry.view<Assets::TransformComponent>().size();
+                        auto cameraComponentCount = scene->registry.view<Assets::CameraComponent>().size();
+                        auto meshComponentCount = scene->registry.view<Assets::MeshComponent>().size();
+                        auto directionalLightComponentCount = scene->registry.view<Assets::DirectionalLightComponent>().size();
+
+                        ImField::Text("Transform Component Count", "%zd", transformComponentCount);
+                        ImField::Text("Transform Component Count", "%zd", cameraComponentCount);
+                        ImField::Text("Mesh Component Count", "%zd", meshComponentCount);
+                        ImField::Text("Directional Light Component Count", "%zd", directionalLightComponentCount);
+                    }
+
                     ImGui::EndTable();
                 }
             }
@@ -1658,6 +1995,175 @@ struct HRayApp : public Layer, public Assets::AssetEventCallback
         }
 
         ImGui::End();
+    }
+
+    Assets::Entity GetSceneCamera(Assets::Scene* scene)
+    {
+        auto camView = scene->registry.view<Assets::CameraComponent>();
+        for (auto e : camView)
+        {
+            Assets::Entity entity = { e, scene };
+            auto& c = entity.GetComponent<Assets::CameraComponent>();
+            if (c.isPrimary)
+                return entity;
+        }
+
+        return {};
+    }
+
+    void UpdateEditorCameraAnimation(Assets::Scene* scene, Assets::Entity mainCameraEntity, float ts)
+    {
+        HE_ASSERT(scene);
+        HE_ASSERT(mainCameraEntity);
+
+        if (cameraAnimation.state & Animation::Animating)
+        {
+            auto wt = mainCameraEntity.GetWorldSpaceTransformMatrix();
+            Math::vec3 position, scale, skew;
+            Math::quat quaternion;
+            Math::vec4 perspective;
+            Math::decompose(wt, scale, quaternion, position, skew, perspective);
+
+            cameraAnimation.t += (ts / cameraAnimation.duration) * (cameraAnimation.state & Animation::Forward ? 1 : -1);
+            cameraAnimation.t = std::clamp(cameraAnimation.t, 0.0f, 1.0f);
+            editorCamera->transform.position = Math::lerp(cameraAnimation.startPosition, position, cameraAnimation.t);
+            editorCamera->transform.rotation = Math::slerp(cameraAnimation.startRotation, quaternion, cameraAnimation.t);
+           
+            cameraPrevPos = editorCamera->transform.position;
+            cameraPrevRot = editorCamera->transform.rotation;
+
+            HRay::Clear(rd);
+
+            // foword
+            if (cameraAnimation.t == 1.0f)
+            {
+                cameraAnimation.state = Animation::None;
+                if (!previewMode) sceneMode = SceneMode::Runtime;
+            }
+
+            // back
+            if (cameraAnimation.t == 0.0f)
+            {
+                cameraAnimation.state = Animation::None;
+
+                if (std::dynamic_pointer_cast<Editor::OrbitCamera>(editorCamera))
+                    orbitCamera->overrideTransform = false;
+            }
+        }
+    }
+
+    void SetRendererToSceneCameraProp(const Assets::CameraComponent& c) 
+    {
+        rd.sceneInfo.view.enableDepthOfField = c.depthOfField.enabled;
+        rd.sceneInfo.view.enableVisualFocusDistance = c.depthOfField.enableVisualFocusDistance && c.depthOfField.enabled;
+        rd.sceneInfo.view.apertureRadius = c.depthOfField.apertureRadius;
+        rd.sceneInfo.view.focusFalloff = c.depthOfField.focusFalloff;
+        rd.sceneInfo.view.focusDistance = c.depthOfField.focusDistance;
+    }
+
+    void SetRendererToEditorCameraProp()
+    {
+        rd.sceneInfo.view.enableDepthOfField = false;
+        rd.sceneInfo.view.enableVisualFocusDistance = false;
+        rd.sceneInfo.view.apertureRadius = 0;
+        rd.sceneInfo.view.focusFalloff = 0;
+        rd.sceneInfo.view.focusDistance = 10;
+    }
+
+    void Preview()
+    {
+        Assets::Scene* scene = assetManager.GetAsset<Assets::Scene>(sceneHandle);
+        if (!scene)
+            return;
+
+        Assets::Entity entity = GetSceneCamera(scene);
+        if (!entity)
+            return;
+
+        previewMode = true;
+
+        // for camera animation
+        cameraAnimation.state = Animation::Forward;
+        cameraAnimation.startPosition = editorCamera->transform.position;
+        cameraAnimation.startRotation = editorCamera->transform.rotation;
+        if (std::dynamic_pointer_cast<Editor::OrbitCamera>(editorCamera))
+            orbitCamera->overrideTransform = true;
+    }
+
+    void StopPreview(bool moveBack = true)
+    {
+        previewMode = false;
+        SetRendererToEditorCameraProp();
+
+        // for camera animation
+        cameraAnimation.state = moveBack ? Animation::Back : Animation::None;
+        if (!moveBack)
+        {
+            cameraAnimation.t = 0;
+            if (std::dynamic_pointer_cast<Editor::OrbitCamera>(editorCamera))
+                orbitCamera->overrideTransform = false;
+        }
+    }
+
+    void Animate()
+    {
+        Assets::Scene* scene = assetManager.GetAsset<Assets::Scene>(sceneHandle);
+        if (!scene)
+            return;
+
+        Assets::Entity entity = GetSceneCamera(scene);
+        if (!entity)
+            return;
+
+        Assets::AssetHandle handle;
+        Assets::Asset asset = assetManager.CreateAsset(handle);
+        auto& assetState = asset.Get<Assets::AssetState>();
+        auto& runtimeScene = asset.Add<Assets::Scene>();
+        Assets::Scene::Copy(*scene, runtimeScene);
+        assetManager.MarkAsMemoryOnlyAsset(asset, Assets::AssetType::Scene);
+        tempSceneHandle = sceneHandle;
+        sceneHandle = handle;
+        sampleCount = 0;
+        frameIndex = 0;
+        selectedEntity = {};
+       
+        HRay::Clear(rd);
+
+        for (; frameIndex < frameStart; frameIndex++)
+        {  
+#if 0
+            OnUpdateFrame();
+            HRay::Clear(rd);
+#else
+            Jops::SubmitToMainThread([this]() {
+
+                OnUpdateFrame();
+                HRay::Clear(rd);
+            });
+#endif
+        }
+
+        // for camera animation
+        cameraAnimation.state = Animation::Forward;
+        cameraAnimation.startPosition = editorCamera->transform.position;
+        cameraAnimation.startRotation = editorCamera->transform.rotation;
+        if (std::dynamic_pointer_cast<Editor::OrbitCamera>(editorCamera))
+            orbitCamera->overrideTransform = true;
+    }
+
+    void Stop()
+    {
+        sceneMode = SceneMode::Editor;
+        assetManager.DestroyAsset(sceneHandle);
+        sceneHandle = tempSceneHandle;
+        sampleCount = 0;
+        frameIndex = 0;
+        selectedEntity = {};
+        SetRendererToEditorCameraProp();
+        HRay::Clear(rd);
+
+        // for camera animation
+        cameraAnimation.state = Animation::Back;
     }
 
     void SetFlyCamera()
@@ -1730,6 +2236,9 @@ struct HRayApp : public Layer, public Assets::AssetEventCallback
 
     void OpenProject(const std::filesystem::path& file)
     {
+        if (sceneMode == SceneMode::Runtime)
+            Stop();
+
         selectedEntity = {};
 
         if (std::filesystem::exists(file))
@@ -1754,6 +2263,9 @@ struct HRayApp : public Layer, public Assets::AssetEventCallback
 
     void CreateNewProject(const std::filesystem::path& path, std::string projectName)
     {
+        if (sceneMode == SceneMode::Runtime)
+            Stop();
+
         selectedEntity = {};
         auto newProjectDir = path / projectName;
         auto cacheDir = newProjectDir / "Cache";
@@ -1783,6 +2295,9 @@ struct HRayApp : public Layer, public Assets::AssetEventCallback
         {
             Jops::SubmitToMainThread([this, file]() {
 
+                if (sceneMode == SceneMode::Runtime)
+                    Stop();
+
                 auto assetFile = std::filesystem::relative(file, assetManager.desc.assetsDirectory);
                 sceneHandle = assetManager.GetAssetHandleFromFilePath(assetFile);
                 if (!assetManager.IsAssetHandleValid(sceneHandle))
@@ -1803,6 +2318,9 @@ struct HRayApp : public Layer, public Assets::AssetEventCallback
         auto file = FileDialog::SaveFile({ { "scene", "scene" } });
         if (!file.empty())
         {
+            if (sceneMode == SceneMode::Runtime)
+                Stop();
+
             assetManager.UnloadAllAssets();
 
             auto assetFile = std::filesystem::relative(file, assetManager.desc.assetsDirectory);
@@ -1859,7 +2377,6 @@ struct HRayApp : public Layer, public Assets::AssetEventCallback
                 out << "\t\t\"enableHierarchyWindow\" : " << (enableHierarchyWindow ? "true" : "false") << ",\n";
                 out << "\t\t\"enableInspectorWindow\" : " << (enableInspectorWindow ? "true" : "false") << ",\n";
                 out << "\t\t\"enableAssetManagerWindow\" : " << (enableAssetManagerWindow ? "true" : "false") << ",\n";
-                out << "\t\t\"enableApplicationWindow\" : " << (enableApplicationWindow ? "true" : "false") << ",\n";
                 out << "\t\t\"enableRendererWindow\" : " << (enableRendererWindow ? "true" : "false") << "\n";
             }
             out << "\t}\n";
@@ -1942,18 +2459,24 @@ struct HRayApp : public Layer, public Assets::AssetEventCallback
             auto orbitCameraData = cameras["orbitCamera"];
             if (!orbitCameraData.error())
             {
-                orbitCamera->focalPoint = {
-                    (float)orbitCameraData["focalPoint"].get_array().at(0).get_double().value(),
-                    (float)orbitCameraData["focalPoint"].get_array().at(1).get_double().value(),
-                    (float)orbitCameraData["focalPoint"].get_array().at(2).get_double().value()
-                };
-                orbitCamera->distance = (float)orbitCameraData["distance"].get_double().value();
+                if (!orbitCameraData["focalPoint"].error())
+                {
+                    orbitCamera->focalPoint = {
+                        (float)orbitCameraData["focalPoint"].get_array().at(0).get_double().value(),
+                        (float)orbitCameraData["focalPoint"].get_array().at(1).get_double().value(),
+                        (float)orbitCameraData["focalPoint"].get_array().at(2).get_double().value()
+                    };
+                }
+                
+                if (!orbitCameraData["distance"].error())
+                    orbitCamera->distance = (float)orbitCameraData["distance"].get_double().value();
             }
 
             auto flyCameraData = cameras["flyCamera"];
             if (!flyCameraData.error())
             {
-                flyCamera->speed = (float)flyCameraData["speed"].get_double().value();
+                if (!flyCameraData["speed"].error())
+                    flyCamera->speed = (float)flyCameraData["speed"].get_double().value();
             }
         }
 
@@ -1988,11 +2511,6 @@ struct HRayApp : public Layer, public Assets::AssetEventCallback
             {
                 auto enable = ui["enableAssetManagerWindow"];
                 if (!enable.error()) enableAssetManagerWindow = enable.get_bool().value();
-            }
-
-            {
-                auto enable = ui["enableApplicationWindow"];
-                if (!enable.error()) enableApplicationWindow = enable.get_bool().value();
             }
 
             {

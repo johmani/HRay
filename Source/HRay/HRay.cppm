@@ -17,44 +17,57 @@ export namespace HRay {
 
     struct SceneInfo
     {
-        // View
-        Math::float4x4 worldToView;
-        Math::float4x4 viewToClip;
-        Math::float4x4 clipToWorld;
+        struct View
+        {
+            Math::float4x4 worldToView;
+            Math::float4x4 viewToClip;
+            Math::float4x4 clipToWorld;
 
-        Math::float3 cameraPosition;
-        uint32_t frameIndex;
+            Math::float3 cameraPosition;
+            uint32_t frameIndex;
 
-        Math::float2 viewSize;
-        Math::float2 viewSizeInv;
+            Math::float2 viewSize;
+            Math::float2 viewSizeInv;
 
-        float minDistance = 0.001f;
-        float maxDistance = 1000.0f;
-        float divergeStrength = 1.0f;
-        float defocusStrength = 0.0f;
+            float minDistance = 0.001f;
+            float maxDistance = 1000.0f;
+            float apertureRadius = 1.0f;
+            float focusFalloff = 0.0f;
+
+            float focusDistance = 10.0f;
+            float fov = 60.0f;
+            Math::float2 padding0;
+
+            bool enableVisualFocusDistance = false;   // new 16-byte block start
+            bool padding1[3];
+
+            bool enableDepthOfField = false;   // new 16-byte block start
+            bool padding2[3];
+            Math::float2 padding3;
+
+        } view;
+
+        struct Light
+        {
+            Math::float4 groundColour = { 0.35, 0.3, 0.35, 1 };
+            Math::float4 skyColourHorizon = { 1, 1, 1, 1 };
+            Math::float4 skyColourZenith = { 0.0788092, 0.36480793, 0.7264151, 1 };
+            
+            int directionalLightCount;
+            bool enableEnvironmentLight = true;
+            bool padding0[3];
+            Math::float2 padding1;
+
+        } light;
         
-        float focusDist = 10.0f;
-        float fov = 60.0f;
-        Math::float2 padding0;
-
-        // Light
-        Math::float4 groundColour = { 0.35, 0.3, 0.35, 1 };
-        Math::float4 skyColourHorizon = { 1, 1, 1, 1 };
-        Math::float4 skyColourZenith = { 0.0788092, 0.36480793, 0.7264151, 1 };
-
-        // Settings
-        int directionalLightCount;
-        int maxLighteBounces = 8;
-        Math::float2 padding1;
-
-        int maxSamples = 1;
-        float gamma = 2.2f;
-        Math::float2 padding2;
-
-        bool enableEnvironmentLight = true;  // 4 bytes
-        bool padding3[3];
-        bool enableVisualFocusDist = false;   // new 16-byte block start
-        bool padding4[3];
+        struct Settings
+        {
+            int maxLighteBounces = 8;
+            int maxSamples = 1;
+            float gamma = 2.2f;
+            int padding0;
+           
+        } settings;
     };
 
     struct GeometryData
@@ -118,20 +131,20 @@ export namespace HRay {
         nvrhi::BindingSetHandle bindingSet;
         nvrhi::SamplerHandle anisotropicWrapSampler;
         nvrhi::rt::PipelineHandle pipeline;
-        nvrhi::TextureHandle renderTarget;
         nvrhi::BufferHandle sceneInfoBuffer;
         nvrhi::rt::ShaderTableHandle shaderTable;
         nvrhi::rt::AccelStructHandle topLevelAS;
         Assets::Material defultMaterial;
         HE::Ref<Assets::DescriptorTableManager> descriptorTable;
         nvrhi::BindingLayoutHandle bindlessLayout;
-        nvrhi::TextureHandle prevRenderTarget;
         nvrhi::BindingLayoutHandle postProcessingBindingLayout;
         nvrhi::BindingSetHandle postProcessingBindingSet;
         nvrhi::ComputePipelineHandle computePipeline;
         nvrhi::ShaderHandle cs;
 
         // Frame Data
+        nvrhi::TextureHandle prevRenderTarget;
+        nvrhi::TextureHandle renderTarget;
         nvrhi::BufferHandle instanceBuffer;
         nvrhi::BufferHandle geometryBuffer;
         nvrhi::BufferHandle materialBuffer;
