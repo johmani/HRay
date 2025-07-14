@@ -2206,19 +2206,17 @@ struct HRayApp : public Layer, public Assets::AssetEventCallback
             Math::vec4 perspective;
             Math::decompose(wt, s, quaternion, p, skew, perspective);
 
-            Math::box3 aabb({ -1.0f,-1.0f,-1.0f }, { 1.0f ,1.0f ,1.0f });
+            auto r = 2.0f;
             if (selectedEntity.HasComponent<Assets::MeshComponent>())
             {
                 auto& mc = selectedEntity.GetComponent<Assets::MeshComponent>();
                 auto meshSource = assetManager.GetAsset<Assets::MeshSource>(mc.meshSourceHandle);
                 auto& mesh = meshSource->meshes[mc.meshIndex];
-                aabb = mesh.aabb;
+                auto aabb = Math::ConvertBoxToWorldSpace(wt, mesh.aabb);
+                r = Math::length(aabb.diagonal());
             }
 
-            aabb = Math::ConvertBoxToWorldSpace(wt, aabb);
-            auto length = Math::length(aabb.diagonal());
-
-            editorCamera->Focus(aabb.center(), length);
+            editorCamera->Focus(p, r);
         }
     }
 

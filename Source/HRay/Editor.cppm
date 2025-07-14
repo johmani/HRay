@@ -125,10 +125,10 @@ export namespace Editor {
             view.projection = Math::perspective(Math::radians(view.fov), aspectRatio, view.near, view.far);
         }
 
-        virtual void Focus(Math::float3 position, float distance) override
+        virtual void Focus(Math::float3 position, float pDistance) override
         {
             focalPoint = position;
-            distance = distance;
+            distance = pDistance;
 
             transform.position = focalPoint + transform.GetForward() * distance;
 
