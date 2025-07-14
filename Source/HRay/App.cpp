@@ -357,10 +357,11 @@ struct HRayApp : public Layer, public Assets::AssetEventCallback
 
         bool validProject = std::filesystem::exists(project.projectFilePath);
 
+        Assets::Scene* scene = assetManager.GetAsset<Assets::Scene>(sceneHandle);
+
         {
             HE_PROFILE_SCOPE("Render");
-
-            Assets::Scene* scene = assetManager.GetAsset<Assets::Scene>(sceneHandle);
+           
             if (scene)
             {
                 Assets::Entity mainCameraEntity = GetSceneCamera(scene);
@@ -494,7 +495,41 @@ struct HRayApp : public Layer, public Assets::AssetEventCallback
                         }
                     }
 
-                    HRay::EndScene(rd, commandList, { editorCamera->view.view, editorCamera->view.projection , editorCamera->transform.position, editorCamera->view.fov, (uint32_t)width, (uint32_t)height });
+                    if(previewMode && mainCameraEntity && cameraAnimation.state& Animation::None)
+                    {
+                        auto& c = mainCameraEntity.GetComponent<Assets::CameraComponent>();
+                        auto wt = mainCameraEntity.GetWorldSpaceTransformMatrix();
+                        Math::float4x4 viewMatrix = Math::inverse(wt);
+                        float fov = c.perspectiveFieldOfView;
+                    
+                        Math::vec3 camPos,s, skew;
+                        Math::quat quaternion;
+                        Math::vec4 perspective;
+                        Math::decompose(wt, s, quaternion, camPos, skew, perspective);
+                    
+                        float aspectRatio = (float)width / (float)height;
+                    
+                        Math::float4x4 projection;
+                        if (c.projectionType == Assets::CameraComponent::ProjectionType::Perspective)
+                        {
+                            projection = Math::perspective(glm::radians(c.perspectiveFieldOfView), aspectRatio, c.perspectiveNear, c.perspectiveFar);
+                        }
+                        else
+                        {
+                            float orthoLeft = -c.orthographicSize * aspectRatio * 0.5f;
+                            float orthoRight = c.orthographicSize * aspectRatio * 0.5f;
+                            float orthoBottom = -c.orthographicSize * 0.5f;
+                            float orthoTop = c.orthographicSize * 0.5f;
+                            projection = Math::ortho(orthoLeft, orthoRight, orthoBottom, orthoTop, c.orthographicNear, c.orthographicFar);
+                        }
+                        SetRendererToSceneCameraProp(c);
+                    
+                        HRay::EndScene(rd, commandList, { viewMatrix, projection, camPos, c.perspectiveFieldOfView, (uint32_t)width, (uint32_t)height });
+                    }
+                    else
+                    {
+                        HRay::EndScene(rd, commandList, { editorCamera->view.view, editorCamera->view.projection , editorCamera->transform.position, editorCamera->view.fov, (uint32_t)width, (uint32_t)height });
+                    }
 
                     clearReq |= cameraPrevPos != editorCamera->transform.position || cameraPrevRot != editorCamera->transform.rotation;
                     if (clearReq)
@@ -520,9 +555,6 @@ struct HRayApp : public Layer, public Assets::AssetEventCallback
 
                 if (mainCameraEntity)
                 {
-                    if (previewMode)
-                        SetRendererToSceneCameraProp(mainCameraEntity.GetComponent<Assets::CameraComponent>());
-
                     UpdateEditorCameraAnimation(scene, mainCameraEntity, info.ts);
                 }
             }
@@ -1250,8 +1282,6 @@ struct HRayApp : public Layer, public Assets::AssetEventCallback
                 auto cf = ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding;
 
                 ImGui::ScopedColorStack sc(ImGuiCol_Header, ImVec4(0, 0, 0, 0), ImGuiCol_HeaderHovered, ImVec4(0, 0, 0, 0), ImGuiCol_HeaderActive, ImVec4(0, 0, 0, 0));
-
-                auto& tc = selectedEntity.GetComponent<Assets::TransformComponent>();
 
                 {
                     ImGui::ScopedStyle wp(ImGuiStyleVar_WindowPadding, ImVec2(8, 8));
