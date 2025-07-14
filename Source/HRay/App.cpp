@@ -643,6 +643,9 @@ struct HRayApp : public Layer, public Assets::AssetEventCallback
                         else 
                             Preview();
                     }
+
+                    if (Input::IsKeyDown(Key::LeftShift) && Input::IsKeyDown(Key::LeftControl) && Input::IsKeyReleased(Key::C))
+                        AlignActiveCameraToView(scene);
                 }
             }
 
@@ -802,6 +805,9 @@ struct HRayApp : public Layer, public Assets::AssetEventCallback
 
                         if (ImGui::MenuItem("Orbit Camera", "Alt + 1", (bool)std::dynamic_pointer_cast<Editor::OrbitCamera>(editorCamera)))
                             SetOrbitCamera();
+                        
+                        if (ImGui::MenuItem("Align Active Camera To View", "LeftCtrl + LeftShift + C"))
+                            AlignActiveCameraToView(scene);
 
                         ImGui::EndMenu();
                     }
@@ -2247,6 +2253,18 @@ struct HRayApp : public Layer, public Assets::AssetEventCallback
             }
 
             editorCamera->Focus(p, r);
+        }
+    }
+
+    void AlignActiveCameraToView(Assets::Scene* scene)
+    {
+        HE_ASSERT(scene);
+
+        auto primaryCamera = GetSceneCamera(scene);
+        if (primaryCamera)
+        {
+            auto newMatrix = editorCamera->transform.ToMat();
+            primaryCamera.SetWorldTransform(newMatrix);
         }
     }
 
