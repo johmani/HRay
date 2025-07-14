@@ -116,6 +116,7 @@ ConstantBuffer<SceneInfo> sceneInfoBuffer : register(b0);
 
 SamplerState materialSampler : register(s0);
 RWTexture2D<float4> renderTarget : register(u0);
+RWTexture2D<float4> prevRenderTarget : register(u1);
 
 typedef BuiltInTriangleIntersectionAttributes HitAttributes;
 
@@ -362,6 +363,15 @@ void RayGen()
     finalColor = finalColor / sceneInfoBuffer.settings.maxSamples;
     finalColor = LinearToSRGB(finalColor);
     renderTarget[rayIndex] = float4(finalColor, 1);
+
+    // Accumulation
+    {
+        float3 c0 = SRGBToLinear(prevRenderTarget[rayIndex].rgb);
+        float3 c1 = SRGBToLinear(renderTarget[rayIndex].rgb);
+
+        float t = 1.0 / (sceneInfoBuffer.view.frameIndex + 1);
+        renderTarget[rayIndex] = float4(LinearToSRGB(lerp(c0, c1, t)), 1);
+    }
 }
 
 [shader("closesthit")]

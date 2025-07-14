@@ -229,6 +229,7 @@ void HRay::Init(RendererData& data, nvrhi::DeviceHandle pDevice, nvrhi::CommandL
            nvrhi::BindingLayoutItem::StructuredBuffer_SRV(3),
            nvrhi::BindingLayoutItem::StructuredBuffer_SRV(4),
            nvrhi::BindingLayoutItem::Texture_UAV(0),
+           nvrhi::BindingLayoutItem::Texture_UAV(1),
            nvrhi::BindingLayoutItem::Sampler(0),
            nvrhi::BindingLayoutItem::VolatileConstantBuffer(0)
         };
@@ -245,8 +246,7 @@ void HRay::Init(RendererData& data, nvrhi::DeviceHandle pDevice, nvrhi::CommandL
         desc.visibility = nvrhi::ShaderType::All;
         desc.bindings = {
            nvrhi::BindingLayoutItem::Texture_UAV(0),
-           nvrhi::BindingLayoutItem::Texture_UAV(1),
-           nvrhi::BindingLayoutItem::PushConstants(0, sizeof(uint32_t))
+           //nvrhi::BindingLayoutItem::PushConstants(0, sizeof(uint32_t))
         };
 
         data.postProcessingBindingLayout = data.device->createBindingLayout(desc);
@@ -366,6 +366,7 @@ void HRay::EndScene(RendererData& data, nvrhi::ICommandList* commandList, const 
                 nvrhi::BindingSetItem::StructuredBuffer_SRV(3, data.materialBuffer),
                 nvrhi::BindingSetItem::StructuredBuffer_SRV(4, data.directionalLightBuffer),
                 nvrhi::BindingSetItem::Texture_UAV(0, data.renderTarget),
+                nvrhi::BindingSetItem::Texture_UAV(1, data.prevRenderTarget),
                 nvrhi::BindingSetItem::Sampler(0, data.anisotropicWrapSampler),
                 nvrhi::BindingSetItem::ConstantBuffer(0, data.sceneInfoBuffer)
             };
@@ -376,9 +377,8 @@ void HRay::EndScene(RendererData& data, nvrhi::ICommandList* commandList, const 
         {
             nvrhi::BindingSetDesc bindingSetDesc;
             bindingSetDesc.bindings = {
-                nvrhi::BindingSetItem::Texture_UAV(0, data.prevRenderTarget),
-                nvrhi::BindingSetItem::Texture_UAV(1, data.renderTarget),
-                nvrhi::BindingSetItem::PushConstants(0, sizeof(uint32_t))
+                nvrhi::BindingSetItem::Texture_UAV(0, data.renderTarget),
+                //nvrhi::BindingSetItem::PushConstants(0, sizeof(uint32_t))
             };
 
             data.postProcessingBindingSet = data.device->createBindingSet(bindingSetDesc, data.postProcessingBindingLayout);
@@ -403,11 +403,11 @@ void HRay::EndScene(RendererData& data, nvrhi::ICommandList* commandList, const 
     args.height = viewDesc.height;
     commandList->dispatchRays(args);
 
-    commandList->setComputeState({ data.computePipeline , { data.postProcessingBindingSet } });
-
-    uint32_t frameIndex = data.frameIndex;
-    commandList->setPushConstants(&frameIndex, sizeof(uint32_t));
-    commandList->dispatch(viewDesc.width / 8, viewDesc.height / 8);
+    if (data.enablePostProcessing)
+    {
+        commandList->setComputeState({ data.computePipeline , { data.postProcessingBindingSet } });
+        commandList->dispatch(viewDesc.width / 8, viewDesc.height / 8);
+    }
     
     data.frameIndex += data.sceneInfo.settings.maxSamples;
     data.time = HE::Application::GetTime() - data.lastTime;

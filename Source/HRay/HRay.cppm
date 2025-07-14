@@ -163,6 +163,7 @@ export namespace HRay {
         uint32_t instanceCount = 0;
         uint32_t materialCount = 0;
         uint32_t textureCount = 0;
+        bool enablePostProcessing = true;
     };
 
     struct ViewDesc
