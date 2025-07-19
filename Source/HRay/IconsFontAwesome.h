@@ -1012,16 +1012,36 @@
 
 #if 0
 /*
-for (int i = 0; i < std::size(icon_definitions); i++)
+
+if (ImField::BeginBlock("Icons"))
 {
-    ImGui::Text("%s : %s", icon_definitions[i].value, icon_definitions[i].name);
+    ImGuiTextFilter filter;
+
+    ImGui::ScopedStyle wp(ImGuiStyleVar_WindowPadding, ImVec2(8, 8));
+    ImGui::BeginChild("Searsh", ImVec2(ImGui::GetContentRegionAvail().x, 0), ImGuiChildFlags_AlwaysUseWindowPadding | ImGuiChildFlags_AutoResizeY);
+    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
+    ImGui::InputTextWithHint("##Searsh", Icon_Search"  Searsh", filter.InputBuf, sizeof(filter.InputBuf));
+    filter.Build();
+    ImGui::EndChild();
+
+    ImGui::Indent(8);
+    for (int i = 0; i < std::size(icon_definitions); i++)
+    {
+        if (!filter.PassFilter(icon_definitions[i].name))
+            continue;
+
+        ImGui::Text("%s : %s", icon_definitions[i].value, icon_definitions[i].name);
+    }
+    ImGui::Unindent();
 }
+ImField::EndBlock();
+
 */
 
 struct IconDef { const char* name; const char* value; };
 
 
-struct IconDef icon_definitions[] = {
+static struct IconDef icon_definitions[] = {
     {"ICON_FA_AD", "\xef\x99\x81"},
     {"ICON_FA_ADDRESS_BOOK", "\xef\x8a\xb9"},
     {"ICON_FA_ADDRESS_CARD", "\xef\x8a\xbb"},

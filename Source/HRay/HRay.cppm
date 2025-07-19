@@ -49,9 +49,9 @@ export namespace HRay {
 
         struct Light
         {
-            Math::float4 groundColour = { 0.35, 0.3, 0.35, 1 };
-            Math::float4 skyColourHorizon = { 1, 1, 1, 1 };
-            Math::float4 skyColourZenith = { 0.0788092, 0.36480793, 0.7264151, 1 };
+            Math::float4 groundColor;
+            Math::float4 horizonSkyColor;
+            Math::float4 zenithSkyColor;
             
             int directionalLightCount;
             bool enableEnvironmentLight = true;
@@ -124,16 +124,12 @@ export namespace HRay {
     struct RendererData
     {
         Assets::AssetManager* am;
-
         nvrhi::DeviceHandle device;
         nvrhi::ShaderLibraryHandle shaderLibrary;
         nvrhi::BindingLayoutHandle bindingLayout;
-        nvrhi::BindingSetHandle bindingSet;
         nvrhi::SamplerHandle anisotropicWrapSampler;
         nvrhi::rt::PipelineHandle pipeline;
-        nvrhi::BufferHandle sceneInfoBuffer;
         nvrhi::rt::ShaderTableHandle shaderTable;
-        nvrhi::rt::AccelStructHandle topLevelAS;
         Assets::Material defultMaterial;
         HE::Ref<Assets::DescriptorTableManager> descriptorTable;
         nvrhi::BindingLayoutHandle bindlessLayout;
@@ -142,13 +138,21 @@ export namespace HRay {
         nvrhi::ComputePipelineHandle computePipeline;
         nvrhi::ShaderHandle cs;
 
-        // Frame Data
+        uint32_t textureCount = 0;
+    };
+
+    struct FrameData
+    {
+        nvrhi::BindingSetHandle bindingSet;
+        nvrhi::BufferHandle sceneInfoBuffer;
         nvrhi::TextureHandle prevRenderTarget;
         nvrhi::TextureHandle renderTarget;
         nvrhi::BufferHandle instanceBuffer;
         nvrhi::BufferHandle geometryBuffer;
         nvrhi::BufferHandle materialBuffer;
         nvrhi::BufferHandle directionalLightBuffer;
+        nvrhi::rt::AccelStructHandle topLevelAS;
+       
         std::vector<nvrhi::rt::InstanceDesc> instances;
         std::vector<InstanceData> instanceData;
         std::vector<GeometryData> geometryData;
@@ -162,8 +166,7 @@ export namespace HRay {
         uint32_t geometryCount = 0;
         uint32_t instanceCount = 0;
         uint32_t materialCount = 0;
-        uint32_t textureCount = 0;
-        bool enablePostProcessing = true;
+        bool enablePostProcessing = false;
     };
 
     struct ViewDesc
@@ -176,10 +179,11 @@ export namespace HRay {
     };
 
     void Init(RendererData& data, nvrhi::DeviceHandle pDevice, nvrhi::CommandListHandle commandList);
-    void BeginScene(RendererData& data);
-    void EndScene(RendererData& data, nvrhi::ICommandList* commandList, const ViewDesc& viewDesc);
-    void SubmitMesh(RendererData& data, Assets::Asset asset, Assets::Mesh& mesh, Math::float4x4 wt, nvrhi::ICommandList* cl);
-    void SubmitDirectionalLight(RendererData& data, const Assets::DirectionalLightComponent& light, Math::float4x4 wt, nvrhi::ICommandList* cl);
+    void BeginScene(RendererData& data, FrameData& frameData);
+    void EndScene(RendererData& data, FrameData& frameData, nvrhi::ICommandList* commandList, const ViewDesc& viewDesc);
+    void SubmitMesh(RendererData& data, FrameData& frameData, Assets::Asset asset, Assets::Mesh& mesh, Math::float4x4 wt, nvrhi::ICommandList* cl);
+    void SubmitDirectionalLight(RendererData& data, FrameData& frameData, const Assets::DirectionalLightComponent& light, Math::float4x4 wt);
+    void SubmitSkyLight(RendererData& data, FrameData& frameData, const Assets::DynamicSkyLightComponent& light);
     void ReleaseTexture(RendererData& data, Assets::Texture* texture);
-    void Clear(RendererData& data);
+    void Clear(FrameData& frameData);
 }

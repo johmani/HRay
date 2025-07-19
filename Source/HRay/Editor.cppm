@@ -24,11 +24,17 @@ export namespace Editor {
     struct WindowDesc
     {
         std::string title;
+        std::string Icon;
         std::string invokePath;
         std::string tooltip;
         bool menuBar = false;
-        ImVec2 padding = { 1, 1};
+        ImVec2 padding = { 1, 1 };
+        int maxWindowInstances = 1;
+        
+        // internal
         ImVec2 size;
+        bool focusRequst;
+        int instanceIndex = 0;
     };
 
     struct Window
@@ -73,6 +79,11 @@ export namespace Editor {
         }
     };
 
+    enum class WindowsLayout
+    {
+        Default
+    };
+
     struct WindowManager
     {
         std::vector<WindowScript> scripts;
@@ -87,14 +98,20 @@ export namespace Editor {
     };
 
     void DistroyWindow(WindowHandle handle);
-    void SaveWindowsState();
+    void UpdateMenuItems();
     void UpdateWindows(HE::Timestep ts);
+    void OpenWindow(const char* windowName);
+    void CloseWindow(std::string_view windowName);
+    void FocusWindow(std::string_view windowName);
     void CloseAllWindows();
+    void LoadWindowsLayout(WindowsLayout layout = WindowsLayout::Default);
     WindowDesc& GetWindowDesc(WindowHandle handle);
     WindowDesc& GetWindowDesc(Window* window);
     void SerializeWindows(std::ostringstream& out);
     void DeserializeWindows(simdjson::dom::element element);
     void DeserializeWindow(WindowHandle handle);
+    void SerializeWindowsState();
+    void DeserializeWindowsState();
 
     //////////////////////////////////////////////////////////////////////////
     // Camera
@@ -240,6 +257,8 @@ export namespace Editor {
     {
         std::filesystem::path projectFilePath;
         std::filesystem::path assetsMetaDataFilePath;
+        std::string layoutFilePath;
+        std::filesystem::path cacheDir;
         std::filesystem::path assetsDir;
     };
 
@@ -279,8 +298,14 @@ export namespace Editor {
 
         Assets::AssetManager assetManager;
         Assets::SubscriberHandle assetEventCallbackHandle = 0;
+        
         Assets::AssetHandle sceneHandle = 0;
+        Assets::AssetHandle tempSceneHandle;
+
+        SceneMode sceneMode = SceneMode::Editor;
+
         HRay::RendererData rd;
+        HRay::FrameData fd;
 
         WindowManager windowManager;
 
@@ -292,26 +317,21 @@ export namespace Editor {
         float fontScale = 1.0f;
 
         Assets::Entity selectedEntity;
-        int gizmoType = ImGuizmo::TRANSLATE;
 
         bool enableTitlebar = true;
         bool enableStartMenu = true;
         bool enableCreateNewProjectPopub = false;
         bool importing = false;
 
+        std::string outputPath;
         std::string projectPath;
         std::string projectName;
         std::filesystem::path appData;
         std::filesystem::path keyBindingsFilePath;
         Project project;
 
-        Assets::AssetHandle tempSceneHandle;
-        std::string outputPath;
-        SceneMode sceneMode = SceneMode::Editor;
-
         int width = 1920;
         int height = 1080;
-        bool useViewportSize = true;
 
         int frameStart = 0;
         int frameEnd = 50;
@@ -324,7 +344,7 @@ export namespace Editor {
    
     struct App : public HE::Layer, public Assets::AssetEventCallback
     {
-        inline static Context* context;
+        inline static Context* s_Context;
 
         void OnAttach() override;
         void OnDetach() override;
@@ -342,8 +362,8 @@ export namespace Editor {
 
     Assets::Entity GetSceneCamera(Assets::Scene* scene);
    
-    void SetRendererToSceneCameraProp(const Assets::CameraComponent& c);
-    void SetRendererToEditorCameraProp();
+    void SetRendererToSceneCameraProp(HRay::FrameData& frameData, const Assets::CameraComponent& c);
+    void SetRendererToEditorCameraProp(HRay::FrameData& frameData);
 
     void Animate();
     void Stop();
@@ -353,6 +373,13 @@ export namespace Editor {
     void CreateNewProject(const std::filesystem::path& path, std::string projectName);
     void OpenScene();
     void NewScene();
+
+    void OpenStartMeue();
+
+    void Clear();
+
+    Assets::Entity GetSelectedEntity();
+    Assets::Scene* GetScene();
 
     void Save(nvrhi::IDevice* device, nvrhi::ITexture* texture, const std::string& directory, uint32_t frameIndex);
     void ImportMeshSource(Assets::Scene* scene, Assets::Entity parent, Assets::Node& node, Assets::Asset asset)
@@ -400,14 +427,37 @@ export namespace Editor {
     WindowHandle BindWindow(const WindowDesc& desc, Args&&... args)
     {
         auto& windowManager = Editor::GetContext().windowManager;
-        auto index = windowManager.scripts.size();
+       
+        if (desc.maxWindowInstances > 1)
+        {
+            for (int i = 0; i < desc.maxWindowInstances; i++)
+            {
+                auto d = desc;
+                if (i > 0)
+                {
+                    d.title = std::format("{} {}", desc.title, i);
+                    d.invokePath = std::format("{}/{}", desc.invokePath, d.title);
+                }
+                else
+                {
+                    d.title = desc.title;
+                    d.invokePath = std::format("{}/{}", desc.invokePath, d.title);
+                }
 
-        windowManager.descs.push_back(desc);
+                windowManager.descs.push_back(d);
 
-        auto& script = windowManager.scripts.emplace_back();
-        script.Bind<T>(std::forward<Args>(args)...);
+                auto& script = windowManager.scripts.emplace_back();
+                script.Bind<T>(std::forward<Args>(args)...);
+            }
+        }
+        else
+        {
+            windowManager.descs.push_back(desc);
+            auto& script = windowManager.scripts.emplace_back();
+            script.Bind<T>(std::forward<Args>(args)...);
+        }
 
-        return index;
+        return 0;
     }
 
     //////////////////////////////////////////////////////////////////////////
@@ -434,13 +484,15 @@ export namespace Editor {
     // App Windows
     //////////////////////////////////////////////////////////////////////////
 
-    struct ViewPortWindow : Window, SceneCallback, SerializationCallback
+    struct ViewPortWindow : Window, SerializationCallback
     {
         HE::Ref<OrbitCamera> orbitCamera;
         HE::Ref<FlyCamera> flyCamera;
         HE::Ref<EditorCamera> editorCamera;
         int width = 1920, height = 1080;
         Math::vec2 viewportBounds[2];
+
+        int gizmoType = ImGuizmo::TRANSLATE;
         
         Animation cameraAnimation;
         bool previewMode = false;
@@ -449,16 +501,16 @@ export namespace Editor {
         Math::quat cameraPrevRot;
         bool clearReq = false;
 
-        Corner toolbarCorner = Corner::TopLeft;    // 0
-        Corner axisGizmoCorner = Corner::TopRight; // 1
-        Corner statsCorner = Corner::ButtomLeft;   // 2
+        Corner toolbarCorner = Corner::TopLeft;
+        Corner axisGizmoCorner = Corner::TopRight;
+        Corner statsCorner = Corner::ButtomLeft; 
+
+        HRay::FrameData fd;
 
         void OnCreate() override;
         void OnUpdate(HE::Timestep ts) override;
         void Serialize(std::ostringstream& out) override;
         void Deserialize(simdjson::dom::element element) override;
-        void OnAnimationStart() override;
-        void OnAnimationStop() override;
 
         void UpdateEditorCameraAnimation(Assets::Scene* scene, Assets::Entity mainCameraEntity, float ts);
         void Preview();
@@ -468,6 +520,13 @@ export namespace Editor {
         void SetOrbitCamera();
         void FocusCamera();
         void AlignActiveCameraToView(Assets::Scene* scene);
+    };
+
+    struct OutputWindow : Window
+    {
+        Corner statsCorner = Corner::ButtomLeft;
+
+        void OnUpdate(HE::Timestep ts) override;
     };
 
     struct HierarchyWindow : Window

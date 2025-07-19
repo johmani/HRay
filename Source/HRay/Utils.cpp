@@ -164,8 +164,6 @@ void Editor::EndMainMenuBar()
     ImGui::EndMainMenuBar();
 }
 
-
-
 void Editor::BeginChildView(const char* str_id, Editor::Corner& corner)
 {
     auto& io = ImGui::GetIO();

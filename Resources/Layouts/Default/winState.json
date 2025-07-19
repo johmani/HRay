@@ -1,0 +1,44 @@
+{
+	"windowsState" : [
+		{
+			"title" : "Asset Manager",
+			"state" : false
+		},
+		{
+			"title" : "Hierarchy",
+			"state" : true
+		},
+		{
+			"title" : "Inspector",
+			"state" : true
+		},
+		{
+			"title" : "Output",
+			"state" : true
+		},
+		{
+			"title" : "Renderer Settings",
+			"state" : true
+		},
+		{
+			"title" : "View Port",
+			"state" : true
+		},
+		{
+			"title" : "View Port 1",
+			"state" : false
+		},
+		{
+			"title" : "View Port 2",
+			"state" : false
+		},
+		{
+			"title" : "View Port 3",
+			"state" : false
+		},
+		{
+			"title" : "View Port 4",
+			"state" : false
+		}
+	]
+}

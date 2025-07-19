@@ -7,4 +7,4 @@ Source/HRay/Embeded/spirv
 *.vcxproj
 *.filters
 *.user
-*.ini
+imgui.ini

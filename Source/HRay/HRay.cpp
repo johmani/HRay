@@ -50,11 +50,10 @@ static float Luminance(float const ev100) noexcept
     return std::pow(2.0f, ev100 - 3.0f);
 }
 
-static void CreateOrResizeRenderTarget(HRay::RendererData& data, uint32_t width, uint32_t height)
+static void CreateOrResizeRenderTarget(HRay::RendererData& data, HRay::FrameData& frameData, uint32_t width, uint32_t height)
 {
     HE_PROFILE_FUNCTION();
 
-    data.renderTarget.Reset();
 
     nvrhi::TextureDesc textureDesc;
     textureDesc.width = width;
@@ -64,51 +63,52 @@ static void CreateOrResizeRenderTarget(HRay::RendererData& data, uint32_t width,
     textureDesc.keepInitialState = true;
     textureDesc.isRenderTarget = false;
     textureDesc.isUAV = true;
-    data.renderTarget = data.device->createTexture(textureDesc);
-    data.prevRenderTarget = data.device->createTexture(textureDesc);
+    frameData.renderTarget = data.device->createTexture(textureDesc);
+    frameData.prevRenderTarget = data.device->createTexture(textureDesc);
 
-    data.bindingSet.Reset();
+    //frameData.renderTarget.Reset();
+    frameData.bindingSet.Reset();
 }
 
-static void CreateOrResizeGeoBuffer(HRay::RendererData& data, uint32_t newSize)
+static void CreateOrResizeGeoBuffer(HRay::RendererData& data, HRay::FrameData& frameData, uint32_t newSize)
 {
     HE_PROFILE_FUNCTION();
 
-    data.geometryData.resize(newSize);
+    frameData.geometryData.resize(newSize);
     nvrhi::BufferDesc bufferDesc;
-    bufferDesc.byteSize = sizeof(HRay::GeometryData) * data.geometryData.size();
+    bufferDesc.byteSize = sizeof(HRay::GeometryData) * frameData.geometryData.size();
     bufferDesc.debugName = "Geometry";
     bufferDesc.structStride = sizeof(HRay::GeometryData);
     bufferDesc.canHaveRawViews = true;
     bufferDesc.canHaveUAVs = true;
     bufferDesc.initialState = nvrhi::ResourceStates::ShaderResource;
     bufferDesc.keepInitialState = true;
-    data.geometryBuffer = data.device->createBuffer(bufferDesc);
+    frameData.geometryBuffer = data.device->createBuffer(bufferDesc);
 
-    data.bindingSet.Reset();
+    frameData.bindingSet.Reset();
 }
 
-static void CreateOrResizeInstanceBuffer(HRay::RendererData& data, uint32_t newSize)
+static void CreateOrResizeInstanceBuffer(HRay::RendererData& data, HRay::FrameData& frameData, uint32_t newSize)
 {
     HE_PROFILE_FUNCTION();
 
     // topLevelAS
     {
-        data.instances.resize(newSize);
-        const size_t maxInstancesCount = data.instances.size();
+        frameData.instances.resize(newSize);
+        const size_t maxInstancesCount = frameData.instances.size();
         nvrhi::rt::AccelStructDesc tlasDesc;
         tlasDesc.debugName = "TLAS";
         tlasDesc.isTopLevel = true;
         tlasDesc.topLevelMaxInstances = maxInstancesCount;
-        data.topLevelAS = data.device->createAccelStruct(tlasDesc);
-        HE_ASSERT(data.topLevelAS);
+        frameData.topLevelAS = data.device->createAccelStruct(tlasDesc);
+        HE_ASSERT(frameData.topLevelAS);
     }
 
     // instanceBuffer
     {
-        data.instanceData.resize(newSize);
+        frameData.instanceData.resize(newSize);
         nvrhi::BufferDesc bufferDesc;
-        bufferDesc.byteSize = sizeof(HRay::InstanceData) * data.instanceData.size();
+        bufferDesc.byteSize = sizeof(HRay::InstanceData) * frameData.instanceData.size();
         bufferDesc.debugName = "Instances";
         bufferDesc.structStride = sizeof(HRay::InstanceData);
         bufferDesc.canHaveRawViews = true;
@@ -116,47 +116,47 @@ static void CreateOrResizeInstanceBuffer(HRay::RendererData& data, uint32_t newS
         bufferDesc.isVertexBuffer = true;
         bufferDesc.initialState = nvrhi::ResourceStates::ShaderResource;
         bufferDesc.keepInitialState = true;
-        data.instanceBuffer = data.device->createBuffer(bufferDesc);
-        HE_ASSERT(data.instanceBuffer);
+        frameData.instanceBuffer = data.device->createBuffer(bufferDesc);
+        HE_ASSERT(frameData.instanceBuffer);
     }
 
-    data.bindingSet.Reset();
+    frameData.bindingSet.Reset();
 }
 
-static void CreateOrResizeMaterialBuffer(HRay::RendererData& data, uint32_t newSize)
+static void CreateOrResizeMaterialBuffer(HRay::RendererData& data, HRay::FrameData& frameData, uint32_t newSize)
 {
     HE_PROFILE_FUNCTION();
 
-    data.materialData.resize(newSize);
+    frameData.materialData.resize(newSize);
     nvrhi::BufferDesc bufferDesc;
-    bufferDesc.byteSize = data.materialData.size() * sizeof(HRay::MaterialData);
+    bufferDesc.byteSize = frameData.materialData.size() * sizeof(HRay::MaterialData);
     bufferDesc.debugName = "MaterialBuffer";
     bufferDesc.structStride = sizeof(HRay::MaterialData);
     bufferDesc.canHaveRawViews = true;
     bufferDesc.canHaveUAVs = true;
     bufferDesc.initialState = nvrhi::ResourceStates::ShaderResource;
     bufferDesc.keepInitialState = true;
-    data.materialBuffer = data.device->createBuffer(bufferDesc);
+    frameData.materialBuffer = data.device->createBuffer(bufferDesc);
 
-    data.bindingSet.Reset();
+    frameData.bindingSet.Reset();
 }
 
-static void CreateOrResizeDirectionalLightBuffer(HRay::RendererData& data, uint32_t newSize)
+static void CreateOrResizeDirectionalLightBuffer(HRay::RendererData& data, HRay::FrameData& frameData, uint32_t newSize)
 {
     HE_PROFILE_FUNCTION();
 
-    data.directionalLightData.resize(newSize);
+    frameData.directionalLightData.resize(newSize);
     nvrhi::BufferDesc bufferDesc;
-    bufferDesc.byteSize = data.directionalLightData.size() * sizeof(HRay::DirectionalLightData);
+    bufferDesc.byteSize = frameData.directionalLightData.size() * sizeof(HRay::DirectionalLightData);
     bufferDesc.debugName = "Directional Light Buffer";
     bufferDesc.structStride = sizeof(HRay::DirectionalLightData);
     bufferDesc.canHaveRawViews = true;
     bufferDesc.canHaveUAVs = true;
     bufferDesc.initialState = nvrhi::ResourceStates::ShaderResource;
     bufferDesc.keepInitialState = true;
-    data.directionalLightBuffer = data.device->createBuffer(bufferDesc);
+    frameData.directionalLightBuffer = data.device->createBuffer(bufferDesc);
 
-    data.bindingSet.Reset();
+    frameData.bindingSet.Reset();
 }
 
 void HRay::Init(RendererData& data, nvrhi::DeviceHandle pDevice, nvrhi::CommandListHandle commandList)
@@ -179,14 +179,6 @@ void HRay::Init(RendererData& data, nvrhi::DeviceHandle pDevice, nvrhi::CommandL
         };
         data.bindlessLayout = data.device->createBindlessLayout(bindlessLayoutDesc);
         data.descriptorTable = HE::CreateRef<Assets::DescriptorTableManager>(data.device, data.bindlessLayout);
-    }
-
-    // SceneInfo Buffer
-    {
-        HE_PROFILE_SCOPE("Create SceneInfo Buffer");
-
-        data.sceneInfoBuffer = data.device->createBuffer(nvrhi::utils::CreateVolatileConstantBufferDesc(sizeof(SceneInfo), "SceneInfoBuffer", sizeof(SceneInfo)));
-        HE_VERIFY(data.sceneInfoBuffer);
     }
 
     // Shaders
@@ -288,96 +280,118 @@ void HRay::Init(RendererData& data, nvrhi::DeviceHandle pDevice, nvrhi::CommandL
         data.computePipeline = data.device->createComputePipeline({ data.cs, { data.postProcessingBindingLayout } }); 
         HE_VERIFY(data.computePipeline);
     }
-
-    {
-        HE_PROFILE_SCOPE("Create Resources");
-
-        CreateOrResizeRenderTarget(data, 1920, 1080);
-        CreateOrResizeGeoBuffer(data, 1024);
-        CreateOrResizeInstanceBuffer(data, 1024);
-        CreateOrResizeMaterialBuffer(data, 1024);
-        CreateOrResizeDirectionalLightBuffer(data, 2);
-    }
 }
 
-void HRay::BeginScene(RendererData& data)
+void HRay::BeginScene(RendererData& data, FrameData& frameData)
 {
     HE_PROFILE_FUNCTION();
 
-    data.geometryCount = 0;
-    data.instanceCount = 0;
-    data.materialCount = 0;
-    data.sceneInfo.light.directionalLightCount = 0;
+    if (!frameData.renderTarget)
+        CreateOrResizeRenderTarget(data, frameData, 1920, 1080);
+
+    if (!frameData.geometryBuffer)
+        CreateOrResizeGeoBuffer(data, frameData, 1024);
+
+    if (!frameData.instanceBuffer)
+        CreateOrResizeInstanceBuffer(data, frameData, 1024);
+
+    if (!frameData.materialBuffer)
+        CreateOrResizeMaterialBuffer(data, frameData, 1024);
+
+    if (!frameData.directionalLightBuffer)
+        CreateOrResizeDirectionalLightBuffer(data, frameData, 2);
+
+    if (!frameData.sceneInfoBuffer)
+    {
+        HE_PROFILE_SCOPE("Create SceneInfo Buffer");
+
+        frameData.sceneInfoBuffer = data.device->createBuffer(nvrhi::utils::CreateVolatileConstantBufferDesc(sizeof(SceneInfo), "SceneInfoBuffer", sizeof(SceneInfo)));
+        HE_VERIFY(frameData.sceneInfoBuffer);
+    }
+
+    frameData.geometryCount = 0;
+    frameData.instanceCount = 0;
+    frameData.materialCount = 0;
+    frameData.sceneInfo.light.directionalLightCount = 0;
 
     {
-        data.materials.clear();
-        data.materialData.clear();
-        data.materialData.resize(data.materialData.capacity());
+        frameData.materials.clear();
+        frameData.materialData.clear();
+        frameData.materialData.resize(frameData.materialData.capacity());
     }
     {
-        data.geometryData.clear();
-        data.geometryData.resize(data.geometryData.capacity());
+        frameData.geometryData.clear();
+        frameData.geometryData.resize(frameData.geometryData.capacity());
     }
     {
-        data.instanceData.clear();
-        data.instanceData.resize(data.instanceData.capacity());
+        frameData.instanceData.clear();
+        frameData.instanceData.resize(frameData.instanceData.capacity());
     }
     {
-        data.instances.clear();
-        data.instances.resize(data.instances.capacity());
+        frameData.instances.clear();
+        frameData.instances.resize(frameData.instances.capacity());
     }
     {
-        data.directionalLightData.clear();
-        data.directionalLightData.resize(data.directionalLightData.capacity());
+        frameData.directionalLightData.clear();
+        frameData.directionalLightData.resize(frameData.directionalLightData.capacity());
     }
 }
 
-void HRay::EndScene(RendererData& data, nvrhi::ICommandList* commandList, const ViewDesc& viewDesc)
+void HRay::EndScene(RendererData& data, FrameData& frameData, nvrhi::ICommandList* commandList, const ViewDesc& viewDesc)
 {
     HE_PROFILE_FUNCTION();
 
     // SceneInfo
     {
-        data.sceneInfo.view.worldToView = viewDesc.view;
-        data.sceneInfo.view.viewToClip = viewDesc.projection;
-        data.sceneInfo.view.clipToWorld = Math::inverse(viewDesc.projection * viewDesc.view);
-        data.sceneInfo.view.cameraPosition = viewDesc.cameraPosition;
-        data.sceneInfo.view.viewSize = Math::float2(viewDesc.width, viewDesc.height);
-        data.sceneInfo.view.fov = Math::radians(viewDesc.fov);
-        data.sceneInfo.view.viewSizeInv = 1.0f / data.sceneInfo.view.viewSize;
-        data.sceneInfo.view.frameIndex = data.frameIndex;
+        frameData.sceneInfo.view.worldToView = viewDesc.view;
+        frameData.sceneInfo.view.viewToClip = viewDesc.projection;
+        frameData.sceneInfo.view.clipToWorld = Math::inverse(viewDesc.projection * viewDesc.view);
+        frameData.sceneInfo.view.cameraPosition = viewDesc.cameraPosition;
+        frameData.sceneInfo.view.viewSize = Math::float2(viewDesc.width, viewDesc.height);
+        frameData.sceneInfo.view.fov = Math::radians(viewDesc.fov);
+        frameData.sceneInfo.view.viewSizeInv = 1.0f / frameData.sceneInfo.view.viewSize;
+        frameData.sceneInfo.view.frameIndex = frameData.frameIndex;
 
-        commandList->writeBuffer(data.sceneInfoBuffer, &data.sceneInfo, sizeof(SceneInfo));
+        commandList->writeBuffer(frameData.sceneInfoBuffer, &frameData.sceneInfo, sizeof(SceneInfo));
     }
 
-    if (data.renderTarget && (viewDesc.width != data.renderTarget->getDesc().width || viewDesc.height != data.renderTarget->getDesc().height))
-        CreateOrResizeRenderTarget(data, viewDesc.width, viewDesc.height);
+    if ((viewDesc.width > 0 && viewDesc.height > 0) && (viewDesc.width != frameData.renderTarget->getDesc().width || viewDesc.height != frameData.renderTarget->getDesc().height))
+        CreateOrResizeRenderTarget(data, frameData, viewDesc.width, viewDesc.height);
 
-    if (!data.bindingSet)
+    if (!frameData.bindingSet)
     {
         {
             HE_PROFILE_SCOPE("CreateBindingSet");
 
+            HE_ASSERT(frameData.topLevelAS);
+            HE_ASSERT(frameData.instanceBuffer);
+            HE_ASSERT(frameData.geometryBuffer);
+            HE_ASSERT(frameData.materialBuffer);
+            HE_ASSERT(frameData.directionalLightBuffer);
+            HE_ASSERT(frameData.renderTarget);
+            HE_ASSERT(frameData.prevRenderTarget);
+            HE_ASSERT(frameData.sceneInfoBuffer);
+
             nvrhi::BindingSetDesc bindingSetDesc;
             bindingSetDesc.bindings = {
-                nvrhi::BindingSetItem::RayTracingAccelStruct(0, data.topLevelAS),
-                nvrhi::BindingSetItem::StructuredBuffer_SRV(1, data.instanceBuffer),
-                nvrhi::BindingSetItem::StructuredBuffer_SRV(2, data.geometryBuffer),
-                nvrhi::BindingSetItem::StructuredBuffer_SRV(3, data.materialBuffer),
-                nvrhi::BindingSetItem::StructuredBuffer_SRV(4, data.directionalLightBuffer),
-                nvrhi::BindingSetItem::Texture_UAV(0, data.renderTarget),
-                nvrhi::BindingSetItem::Texture_UAV(1, data.prevRenderTarget),
+                nvrhi::BindingSetItem::RayTracingAccelStruct(0, frameData.topLevelAS),
+                nvrhi::BindingSetItem::StructuredBuffer_SRV(1, frameData.instanceBuffer),
+                nvrhi::BindingSetItem::StructuredBuffer_SRV(2, frameData.geometryBuffer),
+                nvrhi::BindingSetItem::StructuredBuffer_SRV(3, frameData.materialBuffer),
+                nvrhi::BindingSetItem::StructuredBuffer_SRV(4, frameData.directionalLightBuffer),
+                nvrhi::BindingSetItem::Texture_UAV(0, frameData.renderTarget),
+                nvrhi::BindingSetItem::Texture_UAV(1, frameData.prevRenderTarget),
                 nvrhi::BindingSetItem::Sampler(0, data.anisotropicWrapSampler),
-                nvrhi::BindingSetItem::ConstantBuffer(0, data.sceneInfoBuffer)
+                nvrhi::BindingSetItem::ConstantBuffer(0, frameData.sceneInfoBuffer)
             };
 
-            data.bindingSet = data.device->createBindingSet(bindingSetDesc, data.bindingLayout);
+            frameData.bindingSet = data.device->createBindingSet(bindingSetDesc, data.bindingLayout);
         }
 
         {
             nvrhi::BindingSetDesc bindingSetDesc;
             bindingSetDesc.bindings = {
-                nvrhi::BindingSetItem::Texture_UAV(0, data.renderTarget),
+                nvrhi::BindingSetItem::Texture_UAV(0, frameData.renderTarget),
                 //nvrhi::BindingSetItem::PushConstants(0, sizeof(uint32_t))
             };
 
@@ -385,35 +399,35 @@ void HRay::EndScene(RendererData& data, nvrhi::ICommandList* commandList, const 
         }
     }
 
-    commandList->writeBuffer(data.geometryBuffer, data.geometryData.data(), data.geometryCount * sizeof(GeometryData));
-    commandList->writeBuffer(data.instanceBuffer, data.instanceData.data(), data.instanceCount * sizeof(InstanceData));
-    commandList->writeBuffer(data.materialBuffer, data.materialData.data(), data.materialCount * sizeof(MaterialData));
-    commandList->writeBuffer(data.directionalLightBuffer, data.directionalLightData.data(), data.sceneInfo.light.directionalLightCount * sizeof(DirectionalLightData));
-    commandList->buildTopLevelAccelStruct(data.topLevelAS, data.instances.data(), data.instanceCount, nvrhi::rt::AccelStructBuildFlags::AllowEmptyInstances);
+    commandList->writeBuffer(frameData.geometryBuffer, frameData.geometryData.data(), frameData.geometryCount * sizeof(GeometryData));
+    commandList->writeBuffer(frameData.instanceBuffer, frameData.instanceData.data(), frameData.instanceCount * sizeof(InstanceData));
+    commandList->writeBuffer(frameData.materialBuffer, frameData.materialData.data(), frameData.materialCount * sizeof(MaterialData));
+    commandList->writeBuffer(frameData.directionalLightBuffer, frameData.directionalLightData.data(), frameData.sceneInfo.light.directionalLightCount * sizeof(DirectionalLightData));
+    commandList->buildTopLevelAccelStruct(frameData.topLevelAS, frameData.instances.data(), frameData.instanceCount, nvrhi::rt::AccelStructBuildFlags::AllowEmptyInstances);
 
     nvrhi::rt::State state;
     state.shaderTable = data.shaderTable;
-    state.bindings = { data.bindingSet, data.descriptorTable->GetDescriptorTable() };
+    state.bindings = { frameData.bindingSet, data.descriptorTable->GetDescriptorTable() };
     commandList->setRayTracingState(state);
 
-    commandList->copyTexture(data.prevRenderTarget, {}, data.renderTarget, {});
+    commandList->copyTexture(frameData.prevRenderTarget, {}, frameData.renderTarget, {});
 
     nvrhi::rt::DispatchRaysArguments args;
     args.width = viewDesc.width;
     args.height = viewDesc.height;
     commandList->dispatchRays(args);
 
-    if (data.enablePostProcessing)
+    if (frameData.enablePostProcessing)
     {
         commandList->setComputeState({ data.computePipeline , { data.postProcessingBindingSet } });
         commandList->dispatch(viewDesc.width / 8, viewDesc.height / 8);
     }
     
-    data.frameIndex += data.sceneInfo.settings.maxSamples;
-    data.time = HE::Application::GetTime() - data.lastTime;
+    frameData.frameIndex += frameData.sceneInfo.settings.maxSamples;
+    frameData.time = HE::Application::GetTime() - frameData.lastTime;
 }
 
-void HRay::SubmitMesh(RendererData& data, Assets::Asset asset, Assets::Mesh& mesh, Math::float4x4 wt, nvrhi::ICommandList* cl)
+void HRay::SubmitMesh(RendererData& data, FrameData& frameData, Assets::Asset asset, Assets::Mesh& mesh, Math::float4x4 wt, nvrhi::ICommandList* cl)
 {
     auto meshSource = mesh.meshSource;
 
@@ -538,17 +552,17 @@ void HRay::SubmitMesh(RendererData& data, Assets::Asset asset, Assets::Mesh& mes
         nvrhi::utils::BuildBottomLevelAccelStruct(cl, mesh.accelStruct, blasDesc);
     }
 
-    if (data.instanceData.size() <= data.instanceCount)
-        CreateOrResizeInstanceBuffer(data, (uint32_t)data.instanceData.size() * 2);
+    if (frameData.instanceData.size() <= frameData.instanceCount)
+        CreateOrResizeInstanceBuffer(data, frameData, (uint32_t)frameData.instanceData.size() * 2);
 
     // TLAS
     {
-        nvrhi::rt::InstanceDesc& instanceDesc = data.instances[data.instanceCount];
+        nvrhi::rt::InstanceDesc& instanceDesc = frameData.instances[frameData.instanceCount];
 
         HE_ASSERT(mesh.accelStruct);
         instanceDesc.bottomLevelAS = mesh.accelStruct;
         instanceDesc.instanceMask = c_instanceMaskOpaque;
-        instanceDesc.instanceID = data.instanceCount;
+        instanceDesc.instanceID = frameData.instanceCount;
         //instanceDesc.instanceContributionToHitGroupIndex = ?; // TODO : What is it?
 
         Math::float3x4 transform = Math::transpose(wt);
@@ -557,22 +571,22 @@ void HRay::SubmitMesh(RendererData& data, Assets::Asset asset, Assets::Mesh& mes
 
     // InstanceData
     {
-        InstanceData& idata = data.instanceData[data.instanceCount];
+        InstanceData& idata = frameData.instanceData[frameData.instanceCount];
         idata.transform = wt;
-        idata.firstGeometryIndex = data.geometryCount;
+        idata.firstGeometryIndex = frameData.geometryCount;
     }
 
     // Geometry
     {
         for (const auto& geometry : mesh.GetGeometrySpan())
         {
-            if (data.geometryData.size() <= data.geometryCount)
-                CreateOrResizeGeoBuffer(data, (uint32_t)data.geometryData.size() * 2);
+            if (frameData.geometryData.size() <= frameData.geometryCount)
+                CreateOrResizeGeoBuffer(data, frameData,(uint32_t)frameData.geometryData.size() * 2);
 
-            if (data.materialData.size() <= data.materialCount)
-                CreateOrResizeMaterialBuffer(data, (uint32_t)data.materialData.size() * 2);
+            if (frameData.materialData.size() <= frameData.materialCount)
+                CreateOrResizeMaterialBuffer(data, frameData,(uint32_t)frameData.materialData.size() * 2);
 
-            GeometryData& gd = data.geometryData[data.geometryCount];
+            GeometryData& gd = frameData.geometryData[frameData.geometryCount];
             gd.indexBufferIndex = indexBufferDescriptor.IsValid() ? indexBufferDescriptor.Get() : c_Invalid;
             gd.vertexBufferIndex = vertexBufferDescriptor.IsValid() ? vertexBufferDescriptor.Get() : c_Invalid;
             gd.indexCount = geometry.indexCount;
@@ -591,10 +605,10 @@ void HRay::SubmitMesh(RendererData& data, Assets::Asset asset, Assets::Mesh& mes
 
                 if (material)
                 {
-                    if (!data.materials.contains(geometry.materailHandle))
+                    if (!frameData.materials.contains(geometry.materailHandle))
                     {
-                        data.materials[geometry.materailHandle] = data.materialCount;
-                        data.materialCount++;
+                        frameData.materials[geometry.materailHandle] = frameData.materialCount;
+                        frameData.materialCount++;
                     }
 
                     Assets::Texture* baseTexture = data.am->GetAsset<Assets::Texture>(material->baseTextureHandle);
@@ -629,8 +643,8 @@ void HRay::SubmitMesh(RendererData& data, Assets::Asset asset, Assets::Mesh& mes
                         data.textureCount++;
                     }
 
-                    uint32_t index                    = data.materials.at(geometry.materailHandle);
-                    auto& mat                         = data.materialData[index];
+                    uint32_t index                    = frameData.materials.at(geometry.materailHandle);
+                    auto& mat                         = frameData.materialData[index];
                     mat.baseColor                     = material->baseColor;
                     mat.metallic                      = material->metallic;
                     mat.roughness                     = material->roughness;
@@ -645,19 +659,19 @@ void HRay::SubmitMesh(RendererData& data, Assets::Asset asset, Assets::Mesh& mes
                 }
             }
 
-            data.geometryCount++;
+            frameData.geometryCount++;
         }
     }
 
-    data.instanceCount++;
+    frameData.instanceCount++;
 }
 
-void HRay::SubmitDirectionalLight(RendererData& data, const Assets::DirectionalLightComponent& light, Math::float4x4 wt, nvrhi::ICommandList* cl)
+void HRay::SubmitDirectionalLight(RendererData& data, FrameData& frameData, const Assets::DirectionalLightComponent& light, Math::float4x4 wt)
 {
-    if (data.directionalLightData.size() <= data.sceneInfo.light.directionalLightCount)
-        CreateOrResizeDirectionalLightBuffer(data, (uint32_t)data.directionalLightData.size() * 2);
+    if (frameData.directionalLightData.size() <= frameData.sceneInfo.light.directionalLightCount)
+        CreateOrResizeDirectionalLightBuffer(data, frameData, (uint32_t)frameData.directionalLightData.size() * 2);
 
-    HRay::DirectionalLightData& l = data.directionalLightData[data.sceneInfo.light.directionalLightCount];
+    HRay::DirectionalLightData& l = frameData.directionalLightData[frameData.sceneInfo.light.directionalLightCount];
     l.color = light.color;
     l.intensity = light.intensity;
     l.angularRadius = light.angularRadius;
@@ -665,16 +679,23 @@ void HRay::SubmitDirectionalLight(RendererData& data, const Assets::DirectionalL
     l.haloFalloff = light.haloFalloff;
     l.direction = glm::normalize(glm::vec3(wt[2]));
 
-    data.sceneInfo.light.directionalLightCount++;
+    frameData.sceneInfo.light.directionalLightCount++;
 }
 
-void HRay::Clear(RendererData& data)
+void HRay::SubmitSkyLight(RendererData& data, FrameData& frameData, const Assets::DynamicSkyLightComponent& light)
 {
-    data.frameIndex = 0;
-    data.lastTime = HE::Application::GetTime();
+    frameData.sceneInfo.light.groundColor = Math::float4(light.groundColor,1);
+    frameData.sceneInfo.light.horizonSkyColor = Math::float4(light.horizonSkyColor, 1);
+    frameData.sceneInfo.light.zenithSkyColor = Math::float4(light.zenithSkyColor, 1);
 }
 
-void HRay::ReleaseTexture(RendererData& data, Assets::Texture* texture)
+void HRay::Clear(FrameData& frameData)
+{
+    frameData.frameIndex = 0;
+    frameData.lastTime = HE::Application::GetTime();
+}
+
+void HRay::ReleaseTexture(RendererData& data,  Assets::Texture* texture)
 {
     if (texture->descriptor.IsValid())
     {

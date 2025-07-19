@@ -151,17 +151,15 @@ static void InitEntityFactory()
         return newEntity;
     };
 
-    //auto EnvironmentMap = [this](Assets::Scene* scene, Assets::UUID parent) -> Assets::Entity {
-    //       
-    //    std::string name = GetIncrementedReletiveEntityName(scene, "Environment Map", scene->FindEntity(parent));
-    //    Assets::Entity newEntity = scene->CreateEntity(name, parent);
-    //
-    //    auto& em = newEntity.AddComponent<Assets::EnvironmentMapComponent>();
-    //    auto& tc = newEntity.GetComponent<Assets::TransformComponent>();
-    //    tc.rotation = glm::vec3(0, 0.0f, 0.0f);
-    //
-    //    return newEntity;
-    //};
+    auto DynamicSkyLight = [](Assets::Scene* scene, Assets::UUID parent) -> Assets::Entity {
+           
+        std::string name = Editor::GetIncrementedReletiveEntityName(scene, "Dynamic Sky Light", scene->FindEntity(parent));
+        Assets::Entity newEntity = scene->CreateEntity(name, parent);
+    
+        auto& dsl = newEntity.AddComponent<Assets::DynamicSkyLightComponent>();
+    
+        return newEntity;
+    };
 
 
     auto DirectionalLight = [](Assets::Scene* scene, Assets::UUID parent) -> Assets::Entity {
@@ -195,21 +193,21 @@ static void InitEntityFactory()
 
     Editor::GetContext().createEnityFucntions = {
 
-        { "Empty"                , Empty },
-        { "Camera"               , Camera },
-        { "Mesh/Plane"           , PlaneMesh },
-        { "Mesh/Cube"            , CubeMesh },
-        { "Mesh/Capsule"         , CapsuleMesh },
-        { "Mesh/UVSphere"        , UVSphereMesh },
-        { "Mesh/IcoSphere"       , IcoSphereMesh },
-        { "Mesh/Cylinder"        , CylinderMesh },
-        { "Mesh/Cone"            , ConeMesh },
-        { "Mesh/Torus"           , TorusMesh },
-        { "Mesh/Suzanne"         , Suzanne },
-        //{ "Light/EnvironmentMap" , EnvironmentMap },
-        { "Light/Directional"    , DirectionalLight },
-        //{ "Light/Point"			 , PointLight },
-        //{ "Light/Spot"			 , SpotLight },
+        { "Empty"                     , Empty },
+        { "Camera"                    , Camera },
+        { "Mesh/Plane"                , PlaneMesh },
+        { "Mesh/Cube"                 , CubeMesh },
+        { "Mesh/Capsule"              , CapsuleMesh },
+        { "Mesh/UVSphere"             , UVSphereMesh },
+        { "Mesh/IcoSphere"            , IcoSphereMesh },
+        { "Mesh/Cylinder"             , CylinderMesh },
+        { "Mesh/Cone"                 , ConeMesh },
+        { "Mesh/Torus"                , TorusMesh },
+        { "Mesh/Suzanne"              , Suzanne },
+        { "Light/Dynamic Sky Light"   , DynamicSkyLight },
+        { "Light/Directional"         , DirectionalLight },
+        //{ "Light/Point"			      , PointLight },
+        //{ "Light/Spot"			      , SpotLight },
     };
 }
 
@@ -217,7 +215,7 @@ void Editor::App::OnAttach()
 {
     HE_PROFILE_FUNCTION();
 
-    Editor::App::context = new Editor::Context();
+    Editor::App::s_Context = new Editor::Context();
 
     auto& ctx = Editor::GetContext();
     ctx.app = this;
@@ -225,10 +223,12 @@ void Editor::App::OnAttach()
     ctx.device = RHI::GetDevice();
     ctx.commandList = ctx.device->createCommandList();
 
+    std::filesystem::path projecFilePath;
+
     // Paths
     {
         auto args = Application::GetApplicationDesc().commandLineArgs;
-        ctx.project.projectFilePath = args.count == 2 ? args[1] : "";
+        projecFilePath = args.count == 2 ? args[1] : "";
 
         ctx.appData = FileSystem::GetAppDataPath(Application::GetApplicationDesc().windowDesc.title);
         ctx.keyBindingsFilePath = std::filesystem::current_path() / "Resources" / "keyBindings.json";
@@ -287,41 +287,49 @@ void Editor::App::OnAttach()
         ctx.colors[Color::Light] = { 0.9f, 0.7f, 0.1f, 1.0f };
         ctx.colors[Color::Material] = { 0.9f, 0.5f, 0.8f, 1.0f };
         ctx.colors[Color::Camera] = { 0.7f, 0.1f, 0.9f, 1.0f };
-
-        std::string layoutPath = (ctx.appData / "layout.ini").lexically_normal().string();
-        ImGui::GetIO().IniFilename = nullptr;
-        ImGui::LoadIniSettingsFromDisk(layoutPath.c_str());
     }
 
     // Windows
     {
         Editor::BindWindow<ViewPortWindow>({
             .title = "View Port",
-            .invokePath = "Window/View Port",
+            .Icon = Icon_TV,
+            .invokePath = "Window/General/View Port",
+            .maxWindowInstances = 5
+        });
+
+        Editor::BindWindow<OutputWindow>({
+           .title = "Output",
+           .Icon = Icon_Film,
+           .invokePath = "Window/General/Output",
         });
 
         Editor::BindWindow<HierarchyWindow>({
             .title = "Hierarchy",
-            .invokePath = "Window/Hierarchy",
+            .Icon = Icon_Hierarchy,
+            .invokePath = "Window/General/Hierarchy",
         });
     
         Editor::BindWindow<InspectorWindow>({
             .title = "Inspector",
-            .invokePath = "Window/Inspector",
+            .Icon = Icon_InfoCircle,
+            .invokePath = "Window/General/Inspector",
         });
     
         Editor::BindWindow<AssetManagerWindow>({
             .title = "Asset Manager",
-            .invokePath = "Window/Asset Manager",
+            .Icon = Icon_InfoCircle,
+            .invokePath = "Window/General/Asset Manager",
         });
     
         Editor::BindWindow<RendererSettingsWindow>({
             .title = "Renderer Settings",
-            .invokePath = "Window/Renderer Settings",
+            .Icon = Icon_Settings,
+            .invokePath = "Window/General/Renderer Settings",
         });
     }
 
-    OpenProject(ctx.project.projectFilePath);
+    OpenProject(projecFilePath);
 }
 
 void Editor::App::OnDetach()
@@ -330,18 +338,18 @@ void Editor::App::OnDetach()
 
     auto& ctx = GetContext();
 
-    if (ctx.sceneMode == SceneMode::Runtime)
+    if (ctx.sceneMode == Editor::SceneMode::Runtime)
         Stop();
 
-    Serialize();
+    Editor::Serialize();
     Editor::GetAssetManager().UnSubscribe(ctx.assetEventCallbackHandle);
 
-    delete App::context;
+    delete App::s_Context;
 }
 
 void Editor::App::OnEvent(Event& e)
 {
-    DispatchEvent<WindowDropEvent>(e, HE_BIND_EVENT_FN(OnWindowDropEvent));
+    DispatchEvent<WindowDropEvent>(e, HE_BIND_EVENT_FN(Editor::App::OnWindowDropEvent));
 }
 
 bool Editor::App::OnWindowDropEvent(WindowDropEvent& e)
@@ -355,9 +363,7 @@ bool Editor::App::OnWindowDropEvent(WindowDropEvent& e)
         if (file.extension().string() == ".glb")
         {
             auto& ctx = GetContext();
-
             ImportModel(file);
-            ctx.enableStartMenu = false;
         }
     }
 
@@ -385,10 +391,12 @@ void Editor::App::OnAssetLoaded(Assets::Asset asset)
             ctx.importing = false;
         }
 
+        Editor::Clear();
+
         break;
     }
 
-    default: HRay::Clear(ctx.rd);
+    default: Editor::Clear();
     }
 }
 
@@ -415,9 +423,116 @@ void Editor::App::OnUpdate(const FrameInfo& info)
 
     auto& ctx = GetContext();
 
-    bool validProject = std::filesystem::exists(ctx.project.projectFilePath);
-
     Assets::Scene* scene = Editor::GetAssetManager().GetAsset<Assets::Scene>(ctx.sceneHandle);
+
+    if (scene && ctx.sceneMode == Editor::SceneMode::Runtime && (int)ctx.frameIndex < ctx.frameEnd)
+    {
+        Assets::Entity mainCameraEntity = Editor::GetSceneCamera(scene);
+
+        if (mainCameraEntity)
+        {
+            Math::float3 camPos = {};
+            Math::float4x4 viewMatrix;
+            Math::float4x4 projection;
+
+            auto& c = mainCameraEntity.GetComponent<Assets::CameraComponent>();
+            auto wt = mainCameraEntity.GetWorldSpaceTransformMatrix();
+            viewMatrix = Math::inverse(wt);
+
+            Math::vec3 s, skew;
+            Math::quat quaternion;
+            Math::vec4 perspective;
+            Math::decompose(wt, s, quaternion, camPos, skew, perspective);
+
+            float aspectRatio = (float)ctx.width / (float)ctx.height;
+
+            if (c.projectionType == Assets::CameraComponent::ProjectionType::Perspective)
+            {
+                projection = Math::perspective(glm::radians(c.perspectiveFieldOfView), aspectRatio, c.perspectiveNear, c.perspectiveFar);
+            }
+            else
+            {
+                float orthoLeft = -c.orthographicSize * aspectRatio * 0.5f;
+                float orthoRight = c.orthographicSize * aspectRatio * 0.5f;
+                float orthoBottom = -c.orthographicSize * 0.5f;
+                float orthoTop = c.orthographicSize * 0.5f;
+                projection = Math::ortho(orthoLeft, orthoRight, orthoBottom, orthoTop, c.orthographicNear, c.orthographicFar);
+            }
+
+            Editor::SetRendererToSceneCameraProp(ctx.fd, c);
+
+            HRay::BeginScene(ctx.rd, ctx.fd);
+
+            {
+                auto view = scene->registry.view<Assets::MeshComponent>();
+                for (auto e : view)
+                {
+                    Assets::Entity entity = { e, scene };
+                    auto& dm = entity.GetComponent<Assets::MeshComponent>();
+                    auto wt = entity.GetWorldSpaceTransformMatrix();
+
+                    auto asset = ctx.assetManager.GetAsset(dm.meshSourceHandle);
+                    if (asset && asset.Has<Assets::MeshSource>() && asset.GetState() == Assets::AssetState::Loaded)
+                    {
+                        auto& meshSource = asset.Get<Assets::MeshSource>();
+                        auto& mesh = meshSource.meshes[dm.meshIndex];
+                        HRay::SubmitMesh(ctx.rd, ctx.fd, asset, mesh, wt, ctx.commandList);
+                    }
+                }
+            }
+
+            {
+                auto view = scene->registry.view<Assets::DirectionalLightComponent>();
+                for (auto e : view)
+                {
+                    Assets::Entity entity = { e, scene };
+                    auto& light = entity.GetComponent<Assets::DirectionalLightComponent>();
+                    auto wt = entity.GetWorldSpaceTransformMatrix();
+
+                    HRay::SubmitDirectionalLight(ctx.rd, ctx.fd, light, wt);
+                }
+            }
+
+            {
+                auto view = scene->registry.view<Assets::DynamicSkyLightComponent>();
+                for (auto e : view)
+                {
+                    Assets::Entity entity = { e, scene };
+                    auto& dynamicSkyLight = entity.GetComponent<Assets::DynamicSkyLightComponent>();
+
+                    HRay::SubmitSkyLight(ctx.rd, ctx.fd, dynamicSkyLight);
+                }
+
+                ctx.fd.sceneInfo.light.enableEnvironmentLight = view.size();
+            }
+
+            HRay::EndScene(ctx.rd, ctx.fd, ctx.commandList, { viewMatrix, projection, camPos, c.perspectiveFieldOfView, (uint32_t)ctx.width, (uint32_t)ctx.height });
+
+            {
+                ctx.sampleCount++;
+                ctx.sampleCount = Math::min(ctx.sampleCount, ctx.maxSamples);
+
+                if (ctx.sampleCount == ctx.maxSamples)
+                {
+                    for (int i = 0; i <= ctx.frameStep; i++)
+                        OnUpdateFrame();
+
+                    Editor::Save(ctx.device, ctx.fd.renderTarget, ctx.outputPath, ctx.frameIndex);
+
+                    ctx.sampleCount = 0;
+                    ctx.frameIndex += ctx.frameStep;
+                    ctx.frameIndex = Math::min(ctx.frameIndex, ctx.frameEnd);
+
+                    HRay::Clear(ctx.fd);
+                    Editor::Clear();
+                    if (ctx.frameIndex >= ctx.frameEnd)
+                        Stop();
+                }
+            }
+        }
+    }
+
+    bool validProject = std::filesystem::exists(ctx.project.projectFilePath);
 
     // Shortcuts
     if (true)
@@ -602,9 +717,24 @@ void Editor::App::OnUpdate(const FrameInfo& info)
             {
                 if (ImGui::MenuItem("Title Bar", "Left Shift + T", ctx.enableTitlebar))
                     ctx.enableTitlebar = ctx.enableTitlebar ? false : true;
-
+            
+                if (ImGui::BeginMenu("Layout"))
+                {
+                    if (ImGui::MenuItem("Default", nullptr, nullptr, validProject))
+                        Editor::LoadWindowsLayout();
+            
+                    ImGui::Separator();
+            
+                    if (ImGui::MenuItem("Close All Windows", nullptr, nullptr, validProject))
+                        Editor::CloseAllWindows();
+            
+                    ImGui::EndMenu();
+                }
+            
                 ImGui::EndMenu();
             }
+
+            Editor::UpdateMenuItems();
 
             Editor::EndMainMenuBar();
         }
@@ -643,8 +773,6 @@ void Editor::App::OnUpdate(const FrameInfo& info)
         }
         else
         {
-            ImGui::ScopedStyle ss(ImGuiStyleVar_WindowPadding, ImVec2(4, 4));
-
             Editor::UpdateWindows(info.ts);
         }
 
@@ -784,7 +912,7 @@ void Editor::OnUpdateFrame()
 #endif
 }
 
-Editor::Context& Editor::GetContext() { return *App::context; }
+Editor::Context& Editor::GetContext() { return *App::s_Context; }
 
 Assets::AssetManager& Editor::GetAssetManager() { return GetContext().assetManager; }
 
@@ -802,26 +930,22 @@ Assets::Entity Editor::GetSceneCamera(Assets::Scene* scene)
     return {};
 }
 
-void Editor::SetRendererToSceneCameraProp(const Assets::CameraComponent& c)
+void Editor::SetRendererToSceneCameraProp(HRay::FrameData& frameData, const Assets::CameraComponent& c)
 {
-    auto& ctx = Editor::GetContext();
-
-    ctx.rd.sceneInfo.view.enableDepthOfField = c.depthOfField.enabled;
-    ctx.rd.sceneInfo.view.enableVisualFocusDistance = c.depthOfField.enableVisualFocusDistance && c.depthOfField.enabled;
-    ctx.rd.sceneInfo.view.apertureRadius = c.depthOfField.apertureRadius;
-    ctx.rd.sceneInfo.view.focusFalloff = c.depthOfField.focusFalloff;
-    ctx.rd.sceneInfo.view.focusDistance = c.depthOfField.focusDistance;
+    frameData.sceneInfo.view.enableDepthOfField = c.depthOfField.enabled;
+    frameData.sceneInfo.view.enableVisualFocusDistance = c.depthOfField.enableVisualFocusDistance && c.depthOfField.enabled;
+    frameData.sceneInfo.view.apertureRadius = c.depthOfField.apertureRadius;
+    frameData.sceneInfo.view.focusFalloff = c.depthOfField.focusFalloff;
+    frameData.sceneInfo.view.focusDistance = c.depthOfField.focusDistance;
 }
 
-void Editor::SetRendererToEditorCameraProp()
+void Editor::SetRendererToEditorCameraProp(HRay::FrameData& frameData)
 {
-    auto& ctx = Editor::GetContext();
-
-    ctx.rd.sceneInfo.view.enableDepthOfField = false;
-    ctx.rd.sceneInfo.view.enableVisualFocusDistance = false;
-    ctx.rd.sceneInfo.view.apertureRadius = 0;
-    ctx.rd.sceneInfo.view.focusFalloff = 0;
-    ctx.rd.sceneInfo.view.focusDistance = 10;
+    frameData.sceneInfo.view.enableDepthOfField = false;
+    frameData.sceneInfo.view.enableVisualFocusDistance = false;
+    frameData.sceneInfo.view.apertureRadius = 0;
+    frameData.sceneInfo.view.focusFalloff = 0;
+    frameData.sceneInfo.view.focusDistance = 10;
 }
 
 void Editor::Animate()
@@ -848,7 +972,7 @@ void Editor::Animate()
     ctx.frameIndex = 0;
     ctx.selectedEntity = {};
 
-    HRay::Clear(ctx.rd);
+    Editor::Clear();
     ctx.sceneMode = SceneMode::Runtime;
 
     for (; ctx.frameIndex < ctx.frameStart; ctx.frameIndex++)
@@ -862,7 +986,7 @@ void Editor::Animate()
             auto& ctx = GetContext();
 
             Editor::OnUpdateFrame();
-            HRay::Clear(ctx.rd);
+            Editor::Clear();
         });
 #endif
     }
@@ -881,20 +1005,22 @@ void Editor::Animate()
             }
         }
     }
+
+    Editor::OpenWindow("Output");
+    Editor::FocusWindow("Output");
 }
 
 void Editor::Stop()
 {
     auto& ctx = Editor::GetContext();
 
-    ctx.sceneMode = SceneMode::Editor;
+    ctx.sceneMode = Editor::SceneMode::Editor;
     Editor::GetAssetManager().DestroyAsset(ctx.sceneHandle);
     ctx.sceneHandle = ctx.tempSceneHandle;
     ctx.sampleCount = 0;
     ctx.frameIndex = 0;
     ctx.selectedEntity = {};
-    SetRendererToEditorCameraProp();
-    HRay::Clear(ctx.rd);
+    Editor::Clear();
 
     // SceneCallback
     {
@@ -910,6 +1036,8 @@ void Editor::Stop()
             }
         }
     }
+
+    Editor::FocusWindow("View Port");
 }
 
 void Editor::ImportModel(const std::filesystem::path& file)
@@ -928,57 +1056,84 @@ void Editor::ImportModel(const std::filesystem::path& file)
 
 void Editor::OpenProject(const std::filesystem::path& file)
 {
+    if (!std::filesystem::exists(file))
+        return;
+
     auto& ctx = Editor::GetContext();
 
-    if (ctx.sceneMode == SceneMode::Runtime)
-        Stop();
-
-    ctx.selectedEntity = {};
-
-    if (std::filesystem::exists(file))
     {
-        auto cacheDir = file.parent_path() / "Cache";
+        if (ctx.sceneMode == SceneMode::Runtime)
+            Stop();
 
-        ctx.project.projectFilePath = file;
-        ctx.project.assetsDir = file.parent_path() / "Assets";
-        ctx.project.assetsMetaDataFilePath = cacheDir / "assetsMetaData.json";
+        ctx.selectedEntity = {};
 
-        Editor::GetAssetManager().Reset();
-        Editor::GetAssetManager().desc.importMode = Assets::AssetImportingMode::Async;
-        Editor::GetAssetManager().desc.assetsDirectory = ctx.project.assetsDir;
-        Editor::GetAssetManager().desc.assetsRegistryFilePath = ctx.project.assetsMetaDataFilePath;
-        ctx.assetEventCallbackHandle = Editor::GetAssetManager().Subscribe(Editor::GetContext().app);
-        Editor::GetAssetManager().Deserialize();
-        Deserialize();
+        if (!ctx.project.projectFilePath.empty())
+            Editor::Serialize();
 
-        ctx.enableStartMenu = false;
+        Editor::CloseAllWindows();
     }
+
+    auto cacheDir = file.parent_path() / "Cache";
+    ctx.project.projectFilePath = file;
+    ctx.project.assetsDir = file.parent_path() / "Assets";
+    ctx.project.cacheDir = cacheDir;
+    ctx.project.assetsMetaDataFilePath = cacheDir / "assetsMetaData.json";
+    
+    ctx.project.layoutFilePath = (cacheDir / "layout.ini").lexically_normal().string();
+    
+    ctx.enableStartMenu = false;
+
+    Editor::GetAssetManager().Reset();
+    Editor::GetAssetManager().desc.assetsDirectory = ctx.project.assetsDir;
+    Editor::GetAssetManager().desc.assetsRegistryFilePath = ctx.project.assetsMetaDataFilePath;
+    ctx.assetEventCallbackHandle = Editor::GetAssetManager().Subscribe(Editor::GetContext().app);
+    Editor::GetAssetManager().Deserialize();
+
+    Editor::Deserialize();
 }
 
 void Editor::CreateNewProject(const std::filesystem::path& path, std::string projectName)
 {
     auto& ctx = Editor::GetContext();
 
-    if (ctx.sceneMode == SceneMode::Runtime)
-        Stop();
+    {
+        if (ctx.sceneMode == SceneMode::Runtime)
+            Stop();
 
-    ctx.selectedEntity = {};
+        ctx.selectedEntity = {};
+
+        if (!ctx.project.projectFilePath.empty())
+            Editor::Serialize();
+       
+        Editor::CloseAllWindows();
+    }
+
     auto newProjectDir = path / projectName;
     auto cacheDir = newProjectDir / "Cache";
+    ctx.project.cacheDir = cacheDir;
     ctx.project.projectFilePath = newProjectDir / std::format("{}.hray", projectName);
     ctx.project.assetsDir = newProjectDir / "Assets";
     ctx.project.assetsMetaDataFilePath = cacheDir / "assetsMetaData.json";
+    
+    ctx.project.layoutFilePath = (cacheDir / "layout.ini").lexically_normal().string();
     ctx.enableStartMenu = false;
 
-    std::filesystem::create_directories(cacheDir);
-    std::filesystem::create_directories(ctx.project.assetsDir);
+    HE::FileSystem::ExtractZip(std::filesystem::current_path() / "Resources" / "Templates" / "Empty.zip", newProjectDir);
+    HE::FileSystem::Rename(newProjectDir / "ProjectName.hray", ctx.project.projectFilePath);
 
     Editor::GetAssetManager().Reset();
-    Editor::GetAssetManager().desc.importMode = Assets::AssetImportingMode::Async;
     Editor::GetAssetManager().desc.assetsDirectory = ctx.project.assetsDir;
     Editor::GetAssetManager().desc.assetsRegistryFilePath = ctx.project.assetsMetaDataFilePath;
     ctx.assetEventCallbackHandle = Editor::GetAssetManager().Subscribe(Editor::GetContext().app);
-    Serialize();
+    Editor::GetAssetManager().Deserialize();
+
+    Editor::Deserialize();
+}
+
+void OpenStartMeue()
+{
+    auto& ctx = Editor::GetContext();
+    ctx.enableStartMenu = true;
 }
 
 void Editor::OpenScene()
@@ -1003,8 +1158,8 @@ void Editor::OpenScene()
 
             auto scene = Editor::GetAssetManager().GetAsset<Assets::Scene>(ctx.sceneHandle);
             HE_ASSERT(scene);
-            HRay::Clear(ctx.rd);
-            Serialize();
+            Editor::Clear();
+            Editor::Serialize();
         });
     }
 }
@@ -1025,8 +1180,37 @@ void Editor::NewScene()
 
         auto assetFile = std::filesystem::relative(file, Editor::GetAssetManager().desc.assetsDirectory);
         ctx.sceneHandle = Editor::GetAssetManager().CreateAsset(assetFile).GetHandle();
-        Serialize();
+        Editor::Serialize();
     }
+}
+
+void Editor::Clear()
+{
+    auto& ctx = Editor::GetContext();
+    auto& windowManager = ctx.windowManager;
+
+    HRay::Clear(ctx.fd);
+
+    for (auto s : windowManager.scripts)
+    {
+        if (s.instance)
+        {
+            auto view = dynamic_cast<Editor::ViewPortWindow*>(s.instance);
+            if (view)
+            {
+                HRay::Clear(view->fd);
+            }
+        }
+    }
+}
+
+Assets::Entity Editor::GetSelectedEntity() { return Editor::GetContext().selectedEntity; }
+
+Assets::Scene* Editor::GetScene()
+{
+    auto& ctx = Editor::GetContext();
+
+    return ctx.assetManager.GetAsset<Assets::Scene>(ctx.sceneHandle);
 }
 
 void Editor::Save(nvrhi::IDevice* device, nvrhi::ITexture* texture, const std::string& directory, uint32_t frameIndex)
@@ -1110,7 +1294,7 @@ void Editor::Save(nvrhi::IDevice* device, nvrhi::ITexture* texture, const std::s
         }
 
         device->unmapStagingTexture(stagingTexture);
-        });
+    });
 }
 
 bool Editor::IsEntityNameExistInChildren(Assets::Scene* scene, const std::string& name, Assets::Entity entity)
@@ -1179,7 +1363,6 @@ void Editor::Serialize()
             out << "\t\t\"maxSamples\" : " << ctx.maxSamples << ",\n";
             out << "\t\t\"width\" : " << ctx.width << ",\n";
             out << "\t\t\"height\" : " << ctx.height << ",\n";
-            out << "\t\t\"useViewportSize\" : " << (ctx.useViewportSize ? "true" : "false") << ",\n";
 
             out << "\t\t\"fontScale\" : " << ctx.fontScale << ",\n";
             out << "\t\t\"enableTitlebar\" : " << (ctx.enableTitlebar ? "true" : "false") << "\n";
@@ -1192,12 +1375,7 @@ void Editor::Serialize()
     file << out.str();
     file.close();
 
-    if (ImGui::GetCurrentContext())
-    {
-        std::string layoutPath = (ctx.appData / "layout.ini").lexically_normal().string();
-        ImGui::GetIO().IniFilename = nullptr;
-        ImGui::SaveIniSettingsToDisk(layoutPath.c_str());
-    }
+    Editor::SerializeWindowsState();
 }
 
 bool Editor::Deserialize()
@@ -1265,12 +1443,6 @@ bool Editor::Deserialize()
         }
         
         {
-            auto useViewportSize = main["useViewportSize"];
-            if (!useViewportSize.error())
-                ctx.useViewportSize = useViewportSize.get_bool().value();
-        }
-
-        {
             auto fontScale = main["fontScale"];
             if (!fontScale.error()) 
                 ctx.fontScale = (float)fontScale.get_double().value();
@@ -1283,6 +1455,7 @@ bool Editor::Deserialize()
         }
     }
 
+    Editor::DeserializeWindowsState();
 
     return true;
 }

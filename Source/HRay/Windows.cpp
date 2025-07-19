@@ -16,7 +16,7 @@ void Editor::ViewPortWindow::OnCreate()
 
     orbitCamera = HE::CreateScope<Editor::OrbitCamera>(60.0f, float(width) / float(height), 0.1f, 1000.0f);
     flyCamera = HE::CreateScope<Editor::FlyCamera>(60.0f, float(width) / float(height), 0.1f, 1000.0f);
-    editorCamera = flyCamera;
+    editorCamera = orbitCamera;
 }
 
 void Editor::ViewPortWindow::OnUpdate(HE::Timestep ts)
@@ -29,193 +29,114 @@ void Editor::ViewPortWindow::OnUpdate(HE::Timestep ts)
 
         if (scene)
         {
-            Assets::Entity mainCameraEntity = GetSceneCamera(scene);
+            Assets::Entity mainCameraEntity = Editor::GetSceneCamera(scene);
 
-            if (ctx.sceneMode == SceneMode::Runtime)
+            HRay::BeginScene(ctx.rd, fd);
+
             {
-                if ((int)ctx.frameIndex < ctx.frameEnd)
+                auto view = scene->registry.view<Assets::MeshComponent>();
+                for (auto e : view)
                 {
-                    Assets::CameraComponent* cc = nullptr;
-                    Math::float3 camPos = {};
-                    Math::float4x4 viewMatrix;
-                    Math::float4x4 projection;
+                    Assets::Entity entity = { e, scene };
+                    auto& dm = entity.GetComponent<Assets::MeshComponent>();
+                    auto wt = entity.GetWorldSpaceTransformMatrix();
 
-                    if (mainCameraEntity)
+                    auto asset = ctx.assetManager.GetAsset(dm.meshSourceHandle);
+                    if (asset && asset.Has<Assets::MeshSource>() && asset.GetState() == Assets::AssetState::Loaded)
                     {
-                        auto& c = mainCameraEntity.GetComponent<Assets::CameraComponent>();
-                        cc = &c;
+                        auto& meshSource = asset.Get<Assets::MeshSource>();
+                        auto& mesh = meshSource.meshes[dm.meshIndex];
 
-                        auto wt = mainCameraEntity.GetWorldSpaceTransformMatrix();
-                        viewMatrix = Math::inverse(wt);
-
-                        Math::vec3 s, skew;
-                        Math::quat quaternion;
-                        Math::vec4 perspective;
-                        Math::decompose(wt, s, quaternion, camPos, skew, perspective);
-
-                        float aspectRatio = (float)width / (float)height;
-
-                        if (c.projectionType == Assets::CameraComponent::ProjectionType::Perspective)
-                        {
-                            projection = Math::perspective(glm::radians(c.perspectiveFieldOfView), aspectRatio, c.perspectiveNear, c.perspectiveFar);
-                        }
-                        else
-                        {
-                            float orthoLeft = -c.orthographicSize * aspectRatio * 0.5f;
-                            float orthoRight = c.orthographicSize * aspectRatio * 0.5f;
-                            float orthoBottom = -c.orthographicSize * 0.5f;
-                            float orthoTop = c.orthographicSize * 0.5f;
-                            projection = Math::ortho(orthoLeft, orthoRight, orthoBottom, orthoTop, c.orthographicNear, c.orthographicFar);
-                        }
-
-                        SetRendererToSceneCameraProp(c);
-                    }
-
-                    if (cc)
-                    {
-                        HRay::BeginScene(ctx.rd);
-
-                        {
-                            auto view = scene->registry.view<Assets::MeshComponent>();
-                            for (auto e : view)
-                            {
-                                Assets::Entity entity = { e, scene };
-                                auto& dm = entity.GetComponent<Assets::MeshComponent>();
-                                auto wt = entity.GetWorldSpaceTransformMatrix();
-
-                                auto asset = ctx.assetManager.GetAsset(dm.meshSourceHandle);
-                                if (asset && asset.Has<Assets::MeshSource>() && asset.GetState() == Assets::AssetState::Loaded)
-                                {
-                                    auto& meshSource = asset.Get<Assets::MeshSource>();
-                                    auto& mesh = meshSource.meshes[dm.meshIndex];
-                                    HRay::SubmitMesh(ctx.rd, asset, mesh, wt, ctx.commandList);
-                                }
-                            }
-                        }
-
-                        {
-                            auto view = scene->registry.view<Assets::DirectionalLightComponent>();
-                            for (auto e : view)
-                            {
-                                Assets::Entity entity = { e, scene };
-                                auto& light = entity.GetComponent<Assets::DirectionalLightComponent>();
-                                auto wt = entity.GetWorldSpaceTransformMatrix();
-
-                                HRay::SubmitDirectionalLight(ctx.rd, light, wt, ctx.commandList);
-                            }
-                        }
-
-                        HRay::EndScene(ctx.rd, ctx.commandList, { viewMatrix, projection, camPos, cc->perspectiveFieldOfView, (uint32_t)width, (uint32_t)height });
-                    }
-
-                    ctx.sampleCount++;
-                    if (ctx.sampleCount == ctx.maxSamples)
-                    {
-                        for (int i = 0; i <= ctx.frameStep; i++)
-                            OnUpdateFrame();
-
-                        Editor::Save(ctx.device, ctx.rd.renderTarget, ctx.outputPath, ctx.frameIndex);
-
-                        ctx.sampleCount = 0;
-                        ctx.frameIndex += ctx.frameStep;
-
-                        HRay::Clear(ctx.rd);
-                        if (ctx.frameIndex >= ctx.frameEnd)
-                            Stop();
+                        HRay::SubmitMesh(ctx.rd, fd, asset, mesh, wt, ctx.commandList);
                     }
                 }
             }
-            else
+
             {
-                HRay::BeginScene(ctx.rd);
-
+                auto view = scene->registry.view<Assets::DirectionalLightComponent>();
+                for (auto e : view)
                 {
-                    auto view = scene->registry.view<Assets::MeshComponent>();
-                    for (auto e : view)
-                    {
-                        Assets::Entity entity = { e, scene };
-                        auto& dm = entity.GetComponent<Assets::MeshComponent>();
-                        auto wt = entity.GetWorldSpaceTransformMatrix();
+                    Assets::Entity entity = { e, scene };
+                    auto& light = entity.GetComponent<Assets::DirectionalLightComponent>();
+                    auto wt = entity.GetWorldSpaceTransformMatrix();
 
-                        auto asset = ctx.assetManager.GetAsset(dm.meshSourceHandle);
-                        if (asset && asset.Has<Assets::MeshSource>() && asset.GetState() == Assets::AssetState::Loaded)
-                        {
-                            auto& meshSource = asset.Get<Assets::MeshSource>();
-                            auto& mesh = meshSource.meshes[dm.meshIndex];
+                    HRay::SubmitDirectionalLight(ctx.rd, fd, light, wt);
+                }
+            }
 
-                            HRay::SubmitMesh(ctx.rd, asset, mesh, wt, ctx.commandList);
-                        }
-                    }
+            {
+                auto view = scene->registry.view<Assets::DynamicSkyLightComponent>();
+                for (auto e : view)
+                {
+                    Assets::Entity entity = { e, scene };
+                    auto& dynamicSkyLight = entity.GetComponent<Assets::DynamicSkyLightComponent>();
+
+                    HRay::SubmitSkyLight(ctx.rd, fd, dynamicSkyLight);
                 }
 
+                fd.sceneInfo.light.enableEnvironmentLight = view.size();
+            }
+
+            if (previewMode && mainCameraEntity && cameraAnimation.state & Animation::None)
+            {
+                auto& c = mainCameraEntity.GetComponent<Assets::CameraComponent>();
+                auto wt = mainCameraEntity.GetWorldSpaceTransformMatrix();
+                Math::float4x4 viewMatrix = Math::inverse(wt);
+                float fov = c.perspectiveFieldOfView;
+
+                Math::vec3 camPos, s, skew;
+                Math::quat quaternion;
+                Math::vec4 perspective;
+                Math::decompose(wt, s, quaternion, camPos, skew, perspective);
+
+                float aspectRatio = (float)width / (float)height;
+
+                Math::float4x4 projection;
+                if (c.projectionType == Assets::CameraComponent::ProjectionType::Perspective)
                 {
-                    auto view = scene->registry.view<Assets::DirectionalLightComponent>();
-                    for (auto e : view)
-                    {
-                        Assets::Entity entity = { e, scene };
-                        auto& light = entity.GetComponent<Assets::DirectionalLightComponent>();
-                        auto wt = entity.GetWorldSpaceTransformMatrix();
-
-                        HRay::SubmitDirectionalLight(ctx.rd, light, wt, ctx.commandList);
-                    }
-                }
-
-                if (previewMode && mainCameraEntity && cameraAnimation.state & Animation::None)
-                {
-                    auto& c = mainCameraEntity.GetComponent<Assets::CameraComponent>();
-                    auto wt = mainCameraEntity.GetWorldSpaceTransformMatrix();
-                    Math::float4x4 viewMatrix = Math::inverse(wt);
-                    float fov = c.perspectiveFieldOfView;
-
-                    Math::vec3 camPos, s, skew;
-                    Math::quat quaternion;
-                    Math::vec4 perspective;
-                    Math::decompose(wt, s, quaternion, camPos, skew, perspective);
-
-                    float aspectRatio = (float)width / (float)height;
-
-                    Math::float4x4 projection;
-                    if (c.projectionType == Assets::CameraComponent::ProjectionType::Perspective)
-                    {
-                        projection = Math::perspective(glm::radians(c.perspectiveFieldOfView), aspectRatio, c.perspectiveNear, c.perspectiveFar);
-                    }
-                    else
-                    {
-                        float orthoLeft = -c.orthographicSize * aspectRatio * 0.5f;
-                        float orthoRight = c.orthographicSize * aspectRatio * 0.5f;
-                        float orthoBottom = -c.orthographicSize * 0.5f;
-                        float orthoTop = c.orthographicSize * 0.5f;
-                        projection = Math::ortho(orthoLeft, orthoRight, orthoBottom, orthoTop, c.orthographicNear, c.orthographicFar);
-                    }
-                    SetRendererToSceneCameraProp(c);
-
-                    HRay::EndScene(ctx.rd, ctx.commandList, { viewMatrix, projection, camPos, c.perspectiveFieldOfView, (uint32_t)width, (uint32_t)height });
+                    projection = Math::perspective(glm::radians(c.perspectiveFieldOfView), aspectRatio, c.perspectiveNear, c.perspectiveFar);
                 }
                 else
                 {
-                    HRay::EndScene(ctx.rd, ctx.commandList, { editorCamera->view.view, editorCamera->view.projection , editorCamera->transform.position, editorCamera->view.fov, (uint32_t)width, (uint32_t)height });
+                    float orthoLeft = -c.orthographicSize * aspectRatio * 0.5f;
+                    float orthoRight = c.orthographicSize * aspectRatio * 0.5f;
+                    float orthoBottom = -c.orthographicSize * 0.5f;
+                    float orthoTop = c.orthographicSize * 0.5f;
+                    projection = Math::ortho(orthoLeft, orthoRight, orthoBottom, orthoTop, c.orthographicNear, c.orthographicFar);
                 }
+                SetRendererToSceneCameraProp(fd, c);
 
-                clearReq |= cameraPrevPos != editorCamera->transform.position || cameraPrevRot != editorCamera->transform.rotation;
-                if (clearReq)
+                HRay::EndScene(ctx.rd, fd, ctx.commandList, { viewMatrix, projection, camPos, c.perspectiveFieldOfView, (uint32_t)width, (uint32_t)height });
+            }
+            else
+            {
+                HRay::EndScene(ctx.rd, fd, ctx.commandList, { editorCamera->view.view, editorCamera->view.projection , editorCamera->transform.position, editorCamera->view.fov, (uint32_t)width, (uint32_t)height });
+            }
+
+            if (cameraPrevPos != editorCamera->transform.position || cameraPrevRot != editorCamera->transform.rotation)
+            {
+                cameraPrevPos = editorCamera->transform.position;
+                cameraPrevRot = editorCamera->transform.rotation;
+
+                HRay::Clear(fd);
+
+                // stop preview when camera move
+                if (previewMode && cameraAnimation.state & Animation::None)
                 {
-                    cameraPrevPos = editorCamera->transform.position;
-                    cameraPrevRot = editorCamera->transform.rotation;
-                    HRay::Clear(ctx.rd);
-                    clearReq = false;
-
-                    // stop preview when camera move
-                    if (previewMode && cameraAnimation.state & Animation::None)
+                    if (std::dynamic_pointer_cast<Editor::OrbitCamera>(editorCamera))
                     {
-                        if (std::dynamic_pointer_cast<Editor::OrbitCamera>(editorCamera))
-                        {
-                            orbitCamera->distance = 0.0f;
-                            orbitCamera->focalPoint = editorCamera->transform.position;
-                        }
-
-                        StopPreview(false);
+                        orbitCamera->distance = 0.0f;
+                        orbitCamera->focalPoint = editorCamera->transform.position;
                     }
+
+                    StopPreview(false);
                 }
+            }
+
+            if (clearReq)
+            {
+                Editor::Clear();
+                clearReq = false;
             }
 
             if (mainCameraEntity)
@@ -225,53 +146,32 @@ void Editor::ViewPortWindow::OnUpdate(HE::Timestep ts)
         }
     }
 
+    if(ImGui::IsWindowFocused())
     {
-        if (HE::Input::IsKeyDown(HE::Key::LeftAlt) && HE::Input::IsKeyPressed(HE::Key::D1))
+        if (ImGui::IsKeyDown(ImGuiKey_LeftAlt) && ImGui::IsKeyPressed(ImGuiKey_1))
             SetOrbitCamera();
 
-        if (HE::Input::IsKeyDown(HE::Key::LeftAlt) && HE::Input::IsKeyPressed(HE::Key::D2))
+        if (ImGui::IsKeyDown(ImGuiKey_LeftAlt) && ImGui::IsKeyPressed(ImGuiKey_2))
             SetFlyCamera();
 
-        if (HE::Input::IsKeyDown(HE::Key::LeftControl) && HE::Input::IsKeyReleased(HE::Key::F))
+        if (ImGui::IsKeyDown(ImGuiKey_LeftCtrl) && ImGui::IsKeyPressed(ImGuiKey_F))
             FocusCamera();
 
-        if (HE::Input::IsKeyReleased(HE::Key::KP0) && !(cameraAnimation.state & Animation::Animating) && ctx.sceneMode != SceneMode::Runtime)
+        if (ImGui::IsKeyDown(ImGuiKey_LeftShift) && ImGui::IsKeyDown(ImGuiKey_LeftCtrl) && ImGui::IsKeyPressed(ImGuiKey_C))
+            AlignActiveCameraToView(scene);
+
+        if (ImGui::IsKeyPressed(ImGuiKey_Keypad0) && !(cameraAnimation.state & Animation::Animating))
         {
             if (previewMode)
                 StopPreview();
             else
                 Preview();
         }
-
-        if (HE::Input::IsKeyDown(HE::Key::LeftShift) && HE::Input::IsKeyDown(HE::Key::LeftControl) && HE::Input::IsKeyReleased(HE::Key::C))
-            AlignActiveCameraToView(scene);
     }
 
     {
-        if(ImGui::BeginMenuBar())
-        {
-            if (ImGui::BeginMenu("View"))
-            {
-                if (ImGui::BeginMenu("Navegation"))
-                {
-                    if (ImGui::MenuItem("Fly Camera", "Alt + 2", (bool)std::dynamic_pointer_cast<Editor::FlyCamera>(editorCamera)))
-                        SetFlyCamera();
-        
-                    if (ImGui::MenuItem("Orbit Camera", "Alt + 1", (bool)std::dynamic_pointer_cast<Editor::OrbitCamera>(editorCamera)))
-                        SetOrbitCamera();
-        
-                    if (ImGui::MenuItem("Align Active Camera To View", "LeftCtrl + LeftShift + C"))
-                        AlignActiveCameraToView(scene);
-        
-                    ImGui::EndMenu();
-                }
-        
-                ImGui::EndMenu();
-            }
-        
-            ImGui::EndMenuBar();
-        }
-
+        bool isWindowFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows);
+       
         auto& io = ImGui::GetIO();
         auto& style = ImGui::GetStyle();
         float dpiScale = ImGui::GetWindowDpiScale();
@@ -285,58 +185,63 @@ void Editor::ViewPortWindow::OnUpdate(HE::Timestep ts)
         auto viewportMaxRegion = ImGui::GetCursorScreenPos() + ImGui::GetContentRegionAvail();
         auto viewportOffset = ImGui::GetWindowPos();
 
-        if (ctx.useViewportSize)
         {
-            if (width != w || height != h)
+            ImGui::ScopedStyle ss(ImGuiStyleVar_WindowPadding, ImVec2(8, 8));
+            if (ImGui::BeginMenuBar())
             {
-                width = w;
-                height = h;
-                clearReq |= true;
+                if (ImGui::BeginMenu("View"))
+                {
+                    if (ImGui::BeginMenu("Navegation"))
+                    {
+                        if (ImGui::MenuItem("Fly Camera", "Alt + 2", (bool)std::dynamic_pointer_cast<Editor::FlyCamera>(editorCamera)))
+                            SetFlyCamera();
+
+                        if (ImGui::MenuItem("Orbit Camera", "Alt + 1", (bool)std::dynamic_pointer_cast<Editor::OrbitCamera>(editorCamera)))
+                            SetOrbitCamera();
+
+                        if (ImGui::MenuItem("Focus Camera", "LeftCtrl + F"))
+                            FocusCamera();
+
+                        if (ImGui::MenuItem("Align Active Camera To View", "LeftCtrl + LeftShift + C"))
+                            AlignActiveCameraToView(scene);
+
+                        ImGui::EndMenu();
+                    }
+
+                    ImGui::EndMenu();
+                }
+
+                ImGui::EndMenuBar();
             }
         }
-        else
+
+        if (width != w || height != h)
         {
-            width = ctx.width;
-            height = ctx.height;
+            width = w;
+            height = h;
             clearReq |= true;
         }
-
-        editorCamera->SetViewportSize(width, height);
-        editorCamera->OnUpdate(ts);
-
-        if (ctx.rd.renderTarget && ctx.useViewportSize)
+       
         {
-            ImGui::Image(ctx.rd.renderTarget.Get(), ImVec2{ (float)w, (float)h });
-        }
-        else if (ctx.rd.renderTarget)
-        {
-            ImVec2 availableSize = { (float)w, (float)h };
-            float imageWidth = (float)ctx.rd.renderTarget->getDesc().width;
-            float imageHeight = (float)ctx.rd.renderTarget->getDesc().height;
-            float imageAspect = imageWidth / imageHeight;
-
-            ImVec2 drawSize = availableSize;
-            float availAspect = availableSize.x / availableSize.y;
-            if (availAspect > imageAspect)
-                drawSize.x = availableSize.y * imageAspect;
-            else
-                drawSize.y = availableSize.x / imageAspect;
-
-            ImVec2 cursorPos = ImGui::GetCursorPos();
-            ImVec2 offset = (availableSize - drawSize) * 0.5f;
-            ImGui::SetCursorPos(cursorPos + offset);
-
-            ImGui::Image(ctx.rd.renderTarget.Get(), drawSize);
+            editorCamera->SetViewportSize(width, height);
+            editorCamera->OnUpdate(ts);
         }
 
+        ImVec2 pos;
+        ImVec2 viewSize;
+
+        if (fd.renderTarget)
+        {
+            ImGui::Image(fd.renderTarget.Get(), size);
+        }
 
         // transform Gizmo
-        if (ctx.sceneMode == Editor::SceneMode::Editor)
+        if (isWindowFocused)
         {
             viewportBounds[0] = { viewportMinRegion.x , viewportMinRegion.y };
             viewportBounds[1] = { viewportMaxRegion.x , viewportMaxRegion.y };
 
-            if (ctx.selectedEntity && ctx.gizmoType != -1)
+            if (ctx.selectedEntity && gizmoType != -1)
             {
                 ImGuizmo::SetDrawlist();
                 ImGuizmo::SetRect(
@@ -355,7 +260,7 @@ void Editor::ViewPortWindow::OnUpdate(HE::Timestep ts)
                 bool snap = ImGui::IsKeyDown(ImGuiKey_LeftCtrl);
                 float snapValue = 0.5f;
 
-                if (ctx.gizmoType == ImGuizmo::OPERATION::ROTATE)
+                if (gizmoType == ImGuizmo::OPERATION::ROTATE)
                     snapValue = 45.0f;
 
                 float snapValues[3] = { snapValue, snapValue, snapValue };
@@ -363,7 +268,7 @@ void Editor::ViewPortWindow::OnUpdate(HE::Timestep ts)
                 bool b = ImGuizmo::Manipulate(
                     Math::value_ptr(cameraView),
                     Math::value_ptr(cameraProjection),
-                    (ImGuizmo::OPERATION)ctx.gizmoType,
+                    (ImGuizmo::OPERATION)gizmoType,
                     ImGuizmo::WORLD,
                     Math::value_ptr(entityWorldSpaceTransform),
                     nullptr,
@@ -390,49 +295,47 @@ void Editor::ViewPortWindow::OnUpdate(HE::Timestep ts)
         }
 
         // Toolbar
-        if (ctx.sceneMode == Editor::SceneMode::Editor)
         {
             ImGui::ScopedFont sf(Editor::FontType::Blod, Editor::FontSize::BodyMedium);
 
             Editor::BeginChildView("Toolbar", toolbarCorner);
 
-            ImVec2 buttonSize = ImVec2(30, 30) * io.FontGlobalScale + style.FramePadding * 2.0f;
+            ImVec2 buttonSize = ImVec2(28, 28) * io.FontGlobalScale + style.FramePadding * 2;
 
-            if (ImGui::SelectableButton(Icon_Arrow, buttonSize, ctx.gizmoType == -1))
+            if (ImGui::SelectableButton(Icon_Arrow, buttonSize, gizmoType == -1))
             {
                 if (!ImGuizmo::IsUsing())
-                    ctx.gizmoType = -1;
+                    gizmoType = -1;
             }
 
-            if (ImGui::SelectableButton(Icon_Move, buttonSize, ctx.gizmoType == ImGuizmo::OPERATION::TRANSLATE))
+            if (ImGui::SelectableButton(Icon_Move, buttonSize, gizmoType == ImGuizmo::OPERATION::TRANSLATE))
             {
                 if (!ImGuizmo::IsUsing())
-                    ctx.gizmoType = ImGuizmo::OPERATION::TRANSLATE;
+                    gizmoType = ImGuizmo::OPERATION::TRANSLATE;
             }
 
-            if (ImGui::SelectableButton(Icon_Rotate, buttonSize, ctx.gizmoType == ImGuizmo::OPERATION::ROTATE))
+            if (ImGui::SelectableButton(Icon_Rotate, buttonSize, gizmoType == ImGuizmo::OPERATION::ROTATE))
             {
                 if (!ImGuizmo::IsUsing())
-                    ctx.gizmoType = ImGuizmo::OPERATION::ROTATE;
+                    gizmoType = ImGuizmo::OPERATION::ROTATE;
             }
 
-            if (ImGui::SelectableButton(Icon_Scale, buttonSize, ctx.gizmoType == ImGuizmo::OPERATION::SCALE))
+            if (ImGui::SelectableButton(Icon_Scale, buttonSize, gizmoType == ImGuizmo::OPERATION::SCALE))
             {
                 if (!ImGuizmo::IsUsing())
-                    ctx.gizmoType = ImGuizmo::OPERATION::SCALE;
+                    gizmoType = ImGuizmo::OPERATION::SCALE;
             }
 
-            if (ImGui::SelectableButton(Icon_Transform, buttonSize, ctx.gizmoType == ImGuizmo::OPERATION::UNIVERSAL))
+            if (ImGui::SelectableButton(Icon_Transform, buttonSize, gizmoType == ImGuizmo::OPERATION::UNIVERSAL))
             {
                 if (!ImGuizmo::IsUsing())
-                    ctx.gizmoType = ImGuizmo::OPERATION::UNIVERSAL;
+                    gizmoType = ImGuizmo::OPERATION::UNIVERSAL;
             }
 
             Editor::EndChildView();
         }
 
         // Axis Gizmo
-        if (ctx.sceneMode == SceneMode::Editor)
         {
             Editor::BeginChildView("Axis Gizmo", axisGizmoCorner);
 
@@ -460,32 +363,17 @@ void Editor::ViewPortWindow::OnUpdate(HE::Timestep ts)
 
         // Stats
         {
-
             Editor::BeginChildView("Stats", statsCorner);
 
             const auto& appStats = HE::Application::GetStats();
             if (ctx.sceneMode == SceneMode::Editor)
-                ImGui::Text("CPUMain %.2f ms | FPS %i | Sampels %i | Time %.2f s", appStats.CPUMainTime, appStats.FPS, ctx.rd.frameIndex, ctx.rd.time);
+                ImGui::Text("CPUMain %.2f ms | FPS %i | Sampels %i | Time %.2f s", appStats.CPUMainTime, appStats.FPS, fd.frameIndex, fd.time);
             else
-                ImGui::Text("CPUMain %.2f ms | FPS %i | Time %.2f s | Frame %i / %i | Sample %i / %i", appStats.CPUMainTime, appStats.FPS, ctx.rd.time, ctx.frameIndex, ctx.frameEnd, ctx.sampleCount, ctx.maxSamples);
+                ImGui::Text("CPUMain %.2f ms | FPS %i | Time %.2f s | Frame %i / %i | Sample %i / %i", appStats.CPUMainTime, appStats.FPS, fd.time, ctx.frameIndex, ctx.frameEnd, ctx.sampleCount, ctx.maxSamples);
 
             Editor::EndChildView();
         }
     }
-}
-
-void Editor::ViewPortWindow::OnAnimationStart() 
-{
-    cameraAnimation.state = Animation::Forward;
-    cameraAnimation.startPosition = editorCamera->transform.position;
-    cameraAnimation.startRotation = editorCamera->transform.rotation;
-    if (std::dynamic_pointer_cast<Editor::OrbitCamera>(editorCamera))
-        orbitCamera->overrideTransform = true;
-}
-
-void Editor::ViewPortWindow::OnAnimationStop() 
-{
-    cameraAnimation.state = Animation::Back;
 }
 
 void Editor::ViewPortWindow::UpdateEditorCameraAnimation(Assets::Scene* scene, Assets::Entity mainCameraEntity, float ts)
@@ -511,13 +399,12 @@ void Editor::ViewPortWindow::UpdateEditorCameraAnimation(Assets::Scene* scene, A
         cameraPrevPos = editorCamera->transform.position;
         cameraPrevRot = editorCamera->transform.rotation;
 
-        HRay::Clear(ctx.rd);
+        HRay::Clear(fd);
 
         // foword
         if (cameraAnimation.t == 1.0f)
         {
             cameraAnimation.state = Animation::None;
-            //if (!previewMode) ctx.sceneMode = SceneMode::Runtime;
         }
 
         // back
@@ -533,13 +420,11 @@ void Editor::ViewPortWindow::UpdateEditorCameraAnimation(Assets::Scene* scene, A
 
 void Editor::ViewPortWindow::Preview()
 {
-    auto& ctx = Editor::GetContext();
-
-    Assets::Scene* scene = ctx.assetManager.GetAsset<Assets::Scene>(ctx.sceneHandle);
+    Assets::Scene* scene = Editor::GetScene();
     if (!scene)
         return;
 
-    Assets::Entity entity = GetSceneCamera(scene);
+    Assets::Entity entity = Editor::GetSceneCamera(scene);
     if (!entity)
         return;
 
@@ -555,10 +440,8 @@ void Editor::ViewPortWindow::Preview()
 
 void Editor::ViewPortWindow::StopPreview(bool moveBack)
 {
-    auto& ctx = Editor::GetContext();
-
     previewMode = false;
-    SetRendererToEditorCameraProp();
+    SetRendererToEditorCameraProp(fd);
 
     // for camera animation
     cameraAnimation.state = moveBack ? Animation::Back : Animation::None;
@@ -573,8 +456,6 @@ void Editor::ViewPortWindow::StopPreview(bool moveBack)
 void Editor::ViewPortWindow::SetFlyCamera()
 {
     HE_PROFILE_FUNCTION();
-
-    auto& ctx = Editor::GetContext();
 
     flyCamera->transform = orbitCamera->transform;
 
@@ -606,21 +487,21 @@ void Editor::ViewPortWindow::SetOrbitCamera()
 
 void Editor::ViewPortWindow::FocusCamera()
 {
-    auto& ctx = Editor::GetContext();
+    auto selectedEntity = GetSelectedEntity();
 
-    if (ctx.selectedEntity)
+    if (selectedEntity)
     {
-        auto wt = ctx.selectedEntity.GetWorldSpaceTransformMatrix();
+        auto wt = selectedEntity.GetWorldSpaceTransformMatrix();
         Math::vec3 p, s, skew;
         Math::quat quaternion;
         Math::vec4 perspective;
         Math::decompose(wt, s, quaternion, p, skew, perspective);
 
         auto r = 2.0f;
-        if (ctx.selectedEntity.HasComponent<Assets::MeshComponent>())
+        if (selectedEntity.HasComponent<Assets::MeshComponent>())
         {
-            auto& mc = ctx.selectedEntity.GetComponent<Assets::MeshComponent>();
-            auto meshSource = ctx.assetManager.GetAsset<Assets::MeshSource>(mc.meshSourceHandle);
+            auto& mc = selectedEntity.GetComponent<Assets::MeshComponent>();
+            auto meshSource = Editor::GetAssetManager().GetAsset<Assets::MeshSource>(mc.meshSourceHandle);
             auto& mesh = meshSource->meshes[mc.meshIndex];
             auto aabb = Math::ConvertBoxToWorldSpace(wt, mesh.aabb);
             r = Math::length(aabb.diagonal());
@@ -634,8 +515,6 @@ void Editor::ViewPortWindow::AlignActiveCameraToView(Assets::Scene* scene)
 {
     HE_ASSERT(scene);
 
-    auto& ctx = Editor::GetContext();
-
     auto primaryCamera = Editor::GetSceneCamera(scene);
     if (primaryCamera)
     {
@@ -646,41 +525,45 @@ void Editor::ViewPortWindow::AlignActiveCameraToView(Assets::Scene* scene)
 
 void Editor::ViewPortWindow::Serialize(std::ostringstream& out)
 {
-    // cameras
-    {
-        out << "\t\t\"cameras\" : {\n";
-        {
-            out << "\t\t\t\"position\" : " << editorCamera->transform.position << ",\n";
-            out << "\t\t\t\"rotation\" : " << Math::eulerAngles(editorCamera->transform.rotation) << ",\n";
-            out << "\t\t\t\"cameraType\" : " << (std::dynamic_pointer_cast<Editor::OrbitCamera>(editorCamera) ? 0 : 1) << ",\n";
-    
-            out << "\t\t\t\"orbitCamera\" : {\n";
-            {
-                out << "\t\t\t\t\"focalPoint\" : " << orbitCamera->focalPoint << ",\n";
-                out << "\t\t\t\t\"distance\" : " << orbitCamera->distance << "\n";
-            }
-            out << "\t\t\t},\n";
-    
-            out << "\t\t\t\"flyCamera\" : {\n";
-            {
-                out << "\t\t\t\t\"speed\" : " << flyCamera->speed << "\n";
-            }
-            out << "\t\t\t}\n";
-        }
-        out << "\t\t},\n";
+    out << "\t\t\"gizmoType\" : " << gizmoType << ",\n";
 
-        out << "\t\t\"toolsCorner\" : {\n";
+    out << "\t\t\"cameras\" : {\n";
+    {
+        out << "\t\t\t\"position\" : " << editorCamera->transform.position << ",\n";
+        out << "\t\t\t\"rotation\" : " << Math::eulerAngles(editorCamera->transform.rotation) << ",\n";
+        out << "\t\t\t\"cameraType\" : " << (std::dynamic_pointer_cast<Editor::OrbitCamera>(editorCamera) ? 0 : 1) << ",\n";
+
+        out << "\t\t\t\"orbitCamera\" : {\n";
         {
-            out << "\t\t\t\"toolbarCorner\" : \""   << magic_enum::enum_name<Corner>(toolbarCorner)   << "\",\n";
-            out << "\t\t\t\"statsCorner\" : \""     << magic_enum::enum_name<Corner>(statsCorner)     << "\",\n";
-            out << "\t\t\t\"axisGizmoCorner\" : \"" << magic_enum::enum_name<Corner>(axisGizmoCorner) << "\"\n";
+            out << "\t\t\t\t\"focalPoint\" : " << orbitCamera->focalPoint << ",\n";
+            out << "\t\t\t\t\"distance\" : " << orbitCamera->distance << "\n";
         }
-        out << "\t\t}\n";
+        out << "\t\t\t},\n";
+
+        out << "\t\t\t\"flyCamera\" : {\n";
+        {
+            out << "\t\t\t\t\"speed\" : " << flyCamera->speed << "\n";
+        }
+        out << "\t\t\t}\n";
     }
+    out << "\t\t},\n";
+
+    out << "\t\t\"toolsCorner\" : {\n";
+    {
+        out << "\t\t\t\"toolbarCorner\" : \"" << magic_enum::enum_name<Corner>(toolbarCorner) << "\",\n";
+        out << "\t\t\t\"statsCorner\" : \"" << magic_enum::enum_name<Corner>(statsCorner) << "\",\n";
+        out << "\t\t\t\"axisGizmoCorner\" : \"" << magic_enum::enum_name<Corner>(axisGizmoCorner) << "\"\n";
+    }
+    out << "\t\t}\n";
 }
 
 void Editor::ViewPortWindow::Deserialize(simdjson::dom::element element)
 {
+    {
+        if (!element["gizmoType"].error())
+            gizmoType = (int)element["gizmoType"].get_int64().value();
+    }
+
     auto cameras = element["cameras"];
     if (!cameras.error())
     {
@@ -769,6 +652,66 @@ void Editor::ViewPortWindow::Deserialize(simdjson::dom::element element)
 
 
 #pragma endregion
+#pragma region OutputWindow
+
+void Editor::OutputWindow::OnUpdate(HE::Timestep ts)
+{
+    auto& ctx = GetContext();
+    Assets::Scene* scene = ctx.assetManager.GetAsset<Assets::Scene>(ctx.sceneHandle);
+
+    {
+        bool isWindowFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows);
+
+        auto& io = ImGui::GetIO();
+        auto& style = ImGui::GetStyle();
+        float dpiScale = ImGui::GetWindowDpiScale();
+        float scale = ImGui::GetIO().FontGlobalScale * dpiScale;
+
+        auto size = ImGui::GetContentRegionAvail();
+        uint32_t w = HE::AlignUp(uint32_t(size.x), 2u);
+        uint32_t h = HE::AlignUp(uint32_t(size.y), 2u);
+
+        auto viewportMinRegion = ImGui::GetCursorScreenPos();
+        auto viewportMaxRegion = ImGui::GetCursorScreenPos() + ImGui::GetContentRegionAvail();
+        auto viewportOffset = ImGui::GetWindowPos();
+
+        if (ctx.fd.renderTarget)
+        {
+            ImVec2 availableSize = { (float)w, (float)h };
+            float imageWidth = (float)ctx.fd.renderTarget->getDesc().width;
+            float imageHeight = (float)ctx.fd.renderTarget->getDesc().height;
+            float imageAspect = imageWidth / imageHeight;
+
+            ImVec2 drawSize = availableSize;
+            float availAspect = availableSize.x / availableSize.y;
+            if (availAspect > imageAspect)
+                drawSize.x = availableSize.y * imageAspect;
+            else
+                drawSize.y = availableSize.x / imageAspect;
+
+            ImVec2 cursorPos = ImGui::GetCursorPos();
+            ImVec2 offset = (availableSize - drawSize) * 0.5f;
+            ImGui::SetCursorPos(cursorPos + offset);
+
+            ImGui::Image(ctx.fd.renderTarget.Get(), drawSize);
+        }
+
+        // Stats
+        {
+            Editor::BeginChildView("Stats", statsCorner);
+
+            const auto& appStats = HE::Application::GetStats();
+            if (ctx.sceneMode == SceneMode::Editor)
+                ImGui::Text("CPUMain %.2f ms | FPS %i | Sampels %i | Time %.2f s", appStats.CPUMainTime, appStats.FPS, ctx.fd.frameIndex, ctx.fd.time);
+            else
+                ImGui::Text("CPUMain %.2f ms | FPS %i | Time %.2f s | Frame %i / %i | Sample %i / %i", appStats.CPUMainTime, appStats.FPS, ctx.fd.time, ctx.frameIndex, ctx.frameEnd, ctx.sampleCount, ctx.maxSamples);
+
+            Editor::EndChildView();
+        }
+    }
+}
+
+#pragma endregion
 #pragma region HierarchyWindow
 
 
@@ -840,7 +783,7 @@ void Editor::HierarchyWindow::DrawHierarchy(Assets::Entity parent, Assets::Scene
         {
             Assets::Scene* scene = ctx.assetManager.GetAsset<Assets::Scene>(ctx.sceneHandle);
             if (scene) scene->DestroyEntity(ctx.selectedEntity);
-            HRay::Clear(ctx.rd);
+            Editor::Clear();
         }
 
         if (open)
@@ -877,6 +820,7 @@ void Editor::HierarchyWindow::AddNewMenu(Assets::Entity parent)
         {
             Assets::Scene* scene = ctx.assetManager.GetAsset<Assets::Scene>(ctx.sceneHandle);
             function(scene, parent.GetUUID());
+            Editor::Clear();
         }
     }
 }
@@ -904,7 +848,7 @@ void Editor::InspectorWindow::OnUpdate(HE::Timestep ts)
     {
         auto cf = ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding;
 
-        ImGui::ScopedColorStack sc(ImGuiCol_Header, ImVec4(0, 0, 0, 0), ImGuiCol_HeaderHovered, ImVec4(0, 0, 0, 0), ImGuiCol_HeaderActive, ImVec4(0, 0, 0, 0));
+        //ImGui::ScopedColorStack sc(ImGuiCol_Header, ImVec4(0, 0, 0, 0), ImGuiCol_HeaderHovered, ImVec4(0, 0, 0, 0), ImGuiCol_HeaderActive, ImVec4(0, 0, 0, 0));
 
         {
             ImGui::ScopedStyle wp(ImGuiStyleVar_WindowPadding, ImVec2(8, 8));
@@ -923,9 +867,9 @@ void Editor::InspectorWindow::OnUpdate(HE::Timestep ts)
         ImGui::ScopedStyle fp(ImGuiStyleVar_FramePadding, ImVec2(4, 4));
 
         {
-            if (ImField::BeginBlock("Transform Component", Icon_Arros, ctx.colors[Color::Transform]))
+            if (ImField::BeginBlock("Transform", Icon_Arros, ctx.colors[Color::Transform]))
             {
-                if (ImGui::BeginTable("Transform Component", 2, ImGuiTableFlags_SizingFixedFit))
+                if (ImGui::BeginTable("Transform", 2, ImGuiTableFlags_SizingFixedFit))
                 {
                     auto& tc = ctx.selectedEntity.GetComponent<Assets::TransformComponent>();
 
@@ -933,10 +877,10 @@ void Editor::InspectorWindow::OnUpdate(HE::Timestep ts)
                     switch (p)
                     {
                     case ImFieldDrageScalerEvent_None:                                       break;
-                    case ImFieldDrageScalerEvent_Edited:                    HRay::Clear(ctx.rd); break;
-                    case ImFieldDrageScalerEvent_ResetX: tc.position.x = 0; HRay::Clear(ctx.rd); break;
-                    case ImFieldDrageScalerEvent_ResetY: tc.position.y = 0; HRay::Clear(ctx.rd); break;
-                    case ImFieldDrageScalerEvent_ResetZ: tc.position.z = 0; HRay::Clear(ctx.rd); break;
+                    case ImFieldDrageScalerEvent_Edited:                    Editor::Clear(); break;
+                    case ImFieldDrageScalerEvent_ResetX: tc.position.x = 0; Editor::Clear(); break;
+                    case ImFieldDrageScalerEvent_ResetY: tc.position.y = 0; Editor::Clear(); break;
+                    case ImFieldDrageScalerEvent_ResetZ: tc.position.z = 0; Editor::Clear(); break;
                     }
 
                     Math::float3 degrees = Math::degrees(tc.rotation.GetEuler());
@@ -944,10 +888,10 @@ void Editor::InspectorWindow::OnUpdate(HE::Timestep ts)
                     switch (r)
                     {
                     case ImFieldDrageScalerEvent_None:                                   break;
-                    case ImFieldDrageScalerEvent_Edited:                HRay::Clear(ctx.rd); break;
-                    case ImFieldDrageScalerEvent_ResetX: degrees.x = 0; HRay::Clear(ctx.rd); break;
-                    case ImFieldDrageScalerEvent_ResetY: degrees.y = 0; HRay::Clear(ctx.rd); break;
-                    case ImFieldDrageScalerEvent_ResetZ: degrees.z = 0; HRay::Clear(ctx.rd); break;
+                    case ImFieldDrageScalerEvent_Edited:                Editor::Clear(); break;
+                    case ImFieldDrageScalerEvent_ResetX: degrees.x = 0; Editor::Clear(); break;
+                    case ImFieldDrageScalerEvent_ResetY: degrees.y = 0; Editor::Clear(); break;
+                    case ImFieldDrageScalerEvent_ResetZ: degrees.z = 0; Editor::Clear(); break;
                     }
                     tc.rotation = Math::radians(degrees);
 
@@ -955,10 +899,10 @@ void Editor::InspectorWindow::OnUpdate(HE::Timestep ts)
                     switch (s)
                     {
                     case ImFieldDrageScalerEvent_None:                                    break;
-                    case ImFieldDrageScalerEvent_Edited:                 HRay::Clear(ctx.rd); break;
-                    case ImFieldDrageScalerEvent_ResetX: tc.scale.x = 0; HRay::Clear(ctx.rd); break;
-                    case ImFieldDrageScalerEvent_ResetY: tc.scale.y = 0; HRay::Clear(ctx.rd); break;
-                    case ImFieldDrageScalerEvent_ResetZ: tc.scale.z = 0; HRay::Clear(ctx.rd); break;
+                    case ImFieldDrageScalerEvent_Edited:                 Editor::Clear(); break;
+                    case ImFieldDrageScalerEvent_ResetX: tc.scale.x = 0; Editor::Clear(); break;
+                    case ImFieldDrageScalerEvent_ResetY: tc.scale.y = 0; Editor::Clear(); break;
+                    case ImFieldDrageScalerEvent_ResetZ: tc.scale.z = 0; Editor::Clear(); break;
                     }
 
                     ImGui::EndTable();
@@ -985,32 +929,32 @@ void Editor::InspectorWindow::OnUpdate(HE::Timestep ts)
                             auto s = magic_enum::enum_name<Assets::CameraComponent::ProjectionType>(c.projectionType);
 
                             HE_TRACE("c.projectionType {}", s);
-                            HRay::Clear(ctx.rd);
+                            Editor::Clear();
                         }
                     }
 
-                    if (ImField::Checkbox("Primary", &c.isPrimary)) HRay::Clear(ctx.rd);
+                    if (ImField::Checkbox("Primary", &c.isPrimary)) Editor::Clear();
 
                     if (c.projectionType == Assets::CameraComponent::ProjectionType::Perspective)
                     {
-                        if (ImField::DragFloat("Field Of View", &c.perspectiveFieldOfView)) HRay::Clear(ctx.rd);
-                        if (ImField::DragFloat("Near", &c.perspectiveNear)) HRay::Clear(ctx.rd);
-                        if (ImField::DragFloat("Far", &c.perspectiveFar)) HRay::Clear(ctx.rd);
+                        if (ImField::DragFloat("Field Of View", &c.perspectiveFieldOfView)) Editor::Clear();
+                        if (ImField::DragFloat("Near", &c.perspectiveNear)) Editor::Clear();
+                        if (ImField::DragFloat("Far", &c.perspectiveFar)) Editor::Clear();
                     }
 
                     //if (c.projectionType == Assets::CameraComponent::ProjectionType::Orthographic)
                     //{
-                    //    if (ImField::DragFloat("Size", &c.orthographicSize)) HRay::Clear(ctx.rd);
-                    //    if (ImField::DragFloat("Near", &c.orthographicNear)) HRay::Clear(ctx.rd);
-                    //    if (ImField::DragFloat("Far", &c.orthographicFar)) HRay::Clear(ctx.rd);
+                    //    if (ImField::DragFloat("Size", &c.orthographicSize)) Editor::Clear();
+                    //    if (ImField::DragFloat("Near", &c.orthographicNear)) Editor::Clear();
+                    //    if (ImField::DragFloat("Far", &c.orthographicFar)) Editor::Clear();
                     //}
 
                     ImField::SeparatorText("Depth Of Field");
-                    if (ImField::Checkbox("Enabled", &c.depthOfField.enabled)) HRay::Clear(ctx.rd);
-                    if (ImField::Checkbox("Enable Visual Focus Dist", &c.depthOfField.enableVisualFocusDistance)) HRay::Clear(ctx.rd);
-                    if (ImField::DragFloat("Aperture Radius", &c.depthOfField.apertureRadius, 0.1f, 0.0f)) HRay::Clear(ctx.rd);
-                    if (ImField::DragFloat("Focus Falloff", &c.depthOfField.focusFalloff, 0.1f, 0.0f)) HRay::Clear(ctx.rd);
-                    if (ImField::DragFloat("Focus Distance", &c.depthOfField.focusDistance, 0.1f, 0.0f))  HRay::Clear(ctx.rd);
+                    if (ImField::Checkbox("Enabled", &c.depthOfField.enabled)) Editor::Clear();
+                    if (ImField::Checkbox("Enable Visual Focus Dist", &c.depthOfField.enableVisualFocusDistance)) Editor::Clear();
+                    if (ImField::DragFloat("Aperture Radius", &c.depthOfField.apertureRadius, 0.1f, 0.0f)) Editor::Clear();
+                    if (ImField::DragFloat("Focus Falloff", &c.depthOfField.focusFalloff, 0.1f, 0.0f)) Editor::Clear();
+                    if (ImField::DragFloat("Focus Distance", &c.depthOfField.focusDistance, 0.1f, 0.0f))  Editor::Clear();
 
                     ImGui::EndTable();
                 }
@@ -1020,7 +964,7 @@ void Editor::InspectorWindow::OnUpdate(HE::Timestep ts)
 
         if (ctx.selectedEntity.HasComponent<Assets::MeshComponent>())
         {
-            if (ImField::BeginBlock("Mesh Component", Icon_Mesh, ctx.colors[Color::Mesh]))
+            if (ImField::BeginBlock("Mesh", Icon_Mesh, ctx.colors[Color::Mesh]))
             {
                 auto& dm = ctx.selectedEntity.GetComponent<Assets::MeshComponent>();
                 auto ms = ctx.assetManager.GetAsset<Assets::MeshSource>(dm.meshSourceHandle);
@@ -1034,12 +978,12 @@ void Editor::InspectorWindow::OnUpdate(HE::Timestep ts)
                         {
                             auto& mesh = ms->meshes[dm.meshIndex];
 
-                            if (ImField::Button("Mesh Source", meta.filePath.string().c_str(), { -1, 0 })) HRay::Clear(ctx.rd);
-                            if (ImField::Button("Mesh", mesh.name.c_str(), { -1, 0 })) HRay::Clear(ctx.rd);
+                            if (ImField::Button("Mesh Source", meta.filePath.string().c_str(), { -1, 0 })) Editor::Clear();
+                            if (ImField::Button("Mesh", mesh.name.c_str(), { -1, 0 })) Editor::Clear();
                             if (ImField::InputUInt("Index", &dm.meshIndex))
                             {
                                 dm.meshIndex = dm.meshIndex >= (uint32_t)ms->meshes.size() ? (uint32_t)ms->meshes.size() - 1 : dm.meshIndex;
-                                HRay::Clear(ctx.rd);
+                                Editor::Clear();
                             }
                         }
                     }
@@ -1048,9 +992,9 @@ void Editor::InspectorWindow::OnUpdate(HE::Timestep ts)
                         auto& meta = ctx.assetManager.GetMetadata(dm.meshSourceHandle);
 
                         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.0f, 0.0f, 1.0f));
-                        if (ImField::Button("Mesh Source", meta.filePath.string().c_str(), { -1, 0 })) HRay::Clear(ctx.rd);
+                        if (ImField::Button("Mesh Source", meta.filePath.string().c_str(), { -1, 0 })) Editor::Clear();
                         ImGui::PopStyleColor();
-                        if (ImField::InputUInt("Index", &dm.meshIndex)) HRay::Clear(ctx.rd);
+                        if (ImField::InputUInt("Index", &dm.meshIndex)) Editor::Clear();
                     }
 
                     ImGui::EndTable();
@@ -1059,7 +1003,7 @@ void Editor::InspectorWindow::OnUpdate(HE::Timestep ts)
             ImField::EndBlock();
 
 
-            if (ImField::BeginBlock("Material Component", Icon_Palette, ctx.colors[Color::Material]))
+            if (ImField::BeginBlock("Material", Icon_Palette, ctx.colors[Color::Material]))
             {
                 auto& dm = ctx.selectedEntity.GetComponent<Assets::MeshComponent>();
                 auto ms = ctx.assetManager.GetAsset<Assets::MeshSource>(dm.meshSourceHandle);
@@ -1087,35 +1031,35 @@ void Editor::InspectorWindow::OnUpdate(HE::Timestep ts)
 
                                 ImField::Separator();
                                 auto baseT = ctx.assetManager.GetAsset<Assets::Texture>(mat->baseTextureHandle);
-                                if (ImField::ImageButton("Bace Texture", baseT ? baseT->texture.Get() : ctx.board.Get(), size)) HRay::Clear(ctx.rd);
+                                if (ImField::ImageButton("Bace Texture", baseT ? baseT->texture.Get() : ctx.board.Get(), size)) Editor::Clear();
 
                                 TextureHandler(mat, mat->baseTextureHandle);
-                                if (ImField::ColorEdit4("Bace Color", &mat->baseColor.x)) HRay::Clear(ctx.rd);
+                                if (ImField::ColorEdit4("Bace Color", &mat->baseColor.x)) Editor::Clear();
 
                                 ImField::Separator();
                                 auto normalT = ctx.assetManager.GetAsset<Assets::Texture>(mat->normalTextureHandle);
-                                if (ImField::ImageButton("Normal Texture", normalT ? normalT->texture.Get() : ctx.board.Get(), size)) HRay::Clear(ctx.rd);
+                                if (ImField::ImageButton("Normal Texture", normalT ? normalT->texture.Get() : ctx.board.Get(), size)) Editor::Clear();
                                 TextureHandler(mat, mat->normalTextureHandle);
 
                                 ImField::Separator();
                                 auto metallicRoughnessT = ctx.assetManager.GetAsset<Assets::Texture>(mat->metallicRoughnessTextureHandle);
-                                if (ImField::ImageButton("Metallic Roughness Texture", metallicRoughnessT ? metallicRoughnessT->texture.Get() : ctx.board.Get(), size)) HRay::Clear(ctx.rd);
+                                if (ImField::ImageButton("Metallic Roughness Texture", metallicRoughnessT ? metallicRoughnessT->texture.Get() : ctx.board.Get(), size)) Editor::Clear();
                                 TextureHandler(mat, mat->metallicRoughnessTextureHandle);
-                                if (ImField::DragFloat("Metallic", &mat->metallic, 0.01f, 0.0f, 1.0f)) HRay::Clear(ctx.rd);
-                                if (ImField::DragFloat("Roughness", &mat->roughness, 0.01f, 0.0f, 1.0f)) HRay::Clear(ctx.rd);
+                                if (ImField::DragFloat("Metallic", &mat->metallic, 0.01f, 0.0f, 1.0f)) Editor::Clear();
+                                if (ImField::DragFloat("Roughness", &mat->roughness, 0.01f, 0.0f, 1.0f)) Editor::Clear();
 
                                 ImField::Separator();
                                 auto emissiveT = ctx.assetManager.GetAsset<Assets::Texture>(mat->emissiveTextureHandle);
-                                if (ImField::ImageButton("Emissive Texture", emissiveT ? emissiveT->texture.Get() : ctx.board.Get(), size)) HRay::Clear(ctx.rd);
+                                if (ImField::ImageButton("Emissive Texture", emissiveT ? emissiveT->texture.Get() : ctx.board.Get(), size)) Editor::Clear();
                                 TextureHandler(mat, mat->emissiveTextureHandle);
-                                if (ImField::ColorEdit3("Emissive Color", &mat->emissiveColor.x)) HRay::Clear(ctx.rd);
-                                if (ImField::DragFloat("Emissive Exposure", &mat->emissiveEV, 0.01f)) HRay::Clear(ctx.rd);
+                                if (ImField::ColorEdit3("Emissive Color", &mat->emissiveColor.x)) Editor::Clear();
+                                if (ImField::DragFloat("Emissive Exposure", &mat->emissiveEV, 0.01f)) Editor::Clear();
 
                                 ImField::Separator();
-                                if (ImField::DragFloat2("Offset", &mat->offset.x, 0.01f)) HRay::Clear(ctx.rd);
-                                if (ImField::DragFloat2("Scale", &mat->scale.x, 0.01f)) HRay::Clear(ctx.rd);
+                                if (ImField::DragFloat2("Offset", &mat->offset.x, 0.01f)) Editor::Clear();
+                                if (ImField::DragFloat2("Scale", &mat->scale.x, 0.01f)) Editor::Clear();
                                 float deg = Math::degrees(mat->rotation);
-                                if (ImField::DragFloat("Rotation", &deg, 0.1f)) HRay::Clear(ctx.rd);
+                                if (ImField::DragFloat("Rotation", &deg, 0.1f)) Editor::Clear();
                                 mat->rotation = Math::radians(deg);
 
                                 int selected = 0;
@@ -1124,7 +1068,7 @@ void Editor::InspectorWindow::OnUpdate(HE::Timestep ts)
                                 if (ImField::Combo("UV", types, currentTypeStr, selected))
                                 {
                                     mat->uvSet = magic_enum::enum_cast<Assets::UVSet>(types[selected]).value();
-                                    HRay::Clear(ctx.rd);
+                                    Editor::Clear();
                                 }
 
                                 ImGui::Unindent();
@@ -1147,11 +1091,29 @@ void Editor::InspectorWindow::OnUpdate(HE::Timestep ts)
 
                 if (ImGui::BeginTable("Directional Light", 2, ImGuiTableFlags_SizingFixedFit))
                 {
-                    if (ImField::ColorEdit3("Color", &c.color.x)) HRay::Clear(ctx.rd);
-                    if (ImField::DragFloat("Intensity", &c.intensity)) HRay::Clear(ctx.rd);
-                    if (ImField::DragFloat("AngularRadius", &c.angularRadius)) HRay::Clear(ctx.rd);
-                    if (ImField::DragFloat("HaloSize", &c.haloSize)) HRay::Clear(ctx.rd);
-                    if (ImField::DragFloat("HaloFalloff", &c.haloFalloff)) HRay::Clear(ctx.rd);
+                    if (ImField::ColorEdit3("Color", &c.color.x)) Editor::Clear();
+                    if (ImField::DragFloat("Intensity", &c.intensity)) Editor::Clear();
+                    if (ImField::DragFloat("AngularRadius", &c.angularRadius)) Editor::Clear();
+                    if (ImField::DragFloat("HaloSize", &c.haloSize)) Editor::Clear();
+                    if (ImField::DragFloat("HaloFalloff", &c.haloFalloff)) Editor::Clear();
+
+                    ImGui::EndTable();
+                }
+            }
+            ImField::EndBlock();
+        }
+
+        if (ctx.selectedEntity.HasComponent<Assets::DynamicSkyLightComponent>())
+        {
+            if (ImField::BeginBlock("Dynamic Sky Light", Icon_Sun, ctx.colors[Color::Light]))
+            {
+                auto& c = ctx.selectedEntity.GetComponent<Assets::DynamicSkyLightComponent>();
+
+                if (ImGui::BeginTable("Dynamic Sky Light", 2, ImGuiTableFlags_SizingFixedFit))
+                {
+                    if (ImField::ColorEdit3("Ground Color", &c.groundColor.x)) Editor::Clear();
+                    if (ImField::ColorEdit3("Horizon Sky Color", &c.horizonSkyColor.x)) Editor::Clear();
+                    if (ImField::ColorEdit3("Zenith Sky Color", &c.zenithSkyColor.x)) Editor::Clear();
 
                     ImGui::EndTable();
                 }
@@ -1179,6 +1141,7 @@ void Editor::InspectorWindow::OnUpdate(HE::Timestep ts)
             DisplayAddComponentEntry<Assets::TransformComponent>(Icon_Transform"  TransForm");
             DisplayAddComponentEntry<Assets::MeshComponent>(Icon_Mesh"  Mesh");
             DisplayAddComponentEntry<Assets::DirectionalLightComponent>(Icon_Sun"  Directional Light");
+            DisplayAddComponentEntry<Assets::DynamicSkyLightComponent>(Icon_Sun"  Dynamic Sky Light");
             DisplayAddComponentEntry<Assets::CameraComponent>(Icon_Camera"  Camera");
 
             ImGui::EndPopup();
@@ -1459,25 +1422,17 @@ void Editor::RendererSettingsWindow::OnUpdate(HE::Timestep ts)
 
     auto cf = ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding;
 
-    ImGui::ScopedColor sc0(ImGuiCol_Header, ImVec4(0, 0, 0, 0));
-    ImGui::ScopedColor sc1(ImGuiCol_HeaderHovered, ImVec4(0, 0, 0, 0));
-    ImGui::ScopedColor sc2(ImGuiCol_HeaderActive, ImVec4(0, 0, 0, 0));
-
     if (ImField::BeginBlock("Settings"))
     {
         if (ImGui::BeginTable("Settings", 2, ImGuiTableFlags_SizingFixedFit))
         {
             ImField::Checkbox("VSync", &HE::Application::GetWindow().swapChain->desc.vsync);
-
-            if (ImField::Checkbox("Enable Environment Light", &ctx.rd.sceneInfo.light.enableEnvironmentLight)) HRay::Clear(ctx.rd);
-            if (ImField::ColorEdit4("Sky Colour Zenith", &ctx.rd.sceneInfo.light.skyColourZenith.x)) HRay::Clear(ctx.rd);
-            if (ImField::ColorEdit4("Sky Colour Horizon", &ctx.rd.sceneInfo.light.skyColourHorizon.x)) HRay::Clear(ctx.rd);
-            if (ImField::ColorEdit4("Ground Colour", &ctx.rd.sceneInfo.light.groundColour.x)) HRay::Clear(ctx.rd);
-
-            if (ImField::DragInt("Max Lighte Bounces", &ctx.rd.sceneInfo.settings.maxLighteBounces)) HRay::Clear(ctx.rd);
-            if (ImField::DragInt("Max Samples", &ctx.rd.sceneInfo.settings.maxSamples)) HRay::Clear(ctx.rd);
-            if (ImField::DragFloat("Gamma", &ctx.rd.sceneInfo.settings.gamma)) HRay::Clear(ctx.rd);
-
+    
+            // TODO
+            //if (ImField::DragInt("Max Lighte Bounces", &ctx.rd.sceneInfo.settings.maxLighteBounces)) Editor::Clear();
+            //if (ImField::DragInt("Max Samples", &ctx.rd.sceneInfo.settings.maxSamples)) Editor::Clear();
+            //if (ImField::DragFloat("Gamma", &ctx.rd.sceneInfo.settings.gamma)) Editor::Clear();
+    
             ImGui::EndTable();
         }
     }
@@ -1487,10 +1442,8 @@ void Editor::RendererSettingsWindow::OnUpdate(HE::Timestep ts)
     {
         if (ImGui::BeginTable("Output", 2, ImGuiTableFlags_SizingFixedFit))
         {
-            if (ImField::Checkbox("Use Viewport Size", &ctx.useViewportSize)) HRay::Clear(ctx.rd);
-            
-            if (ImField::DragInt("Width", &ctx.width)) HRay::Clear(ctx.rd);
-            if (ImField::DragInt("Height", &ctx.height)) HRay::Clear(ctx.rd);
+            if (ImField::DragInt("Width", &ctx.width)) Editor::Clear();
+            if (ImField::DragInt("Height", &ctx.height)) Editor::Clear();
 
             ImField::DragInt("Frame Start", &ctx.frameStart);
             ImField::DragInt("Frame End", &ctx.frameEnd);
@@ -1566,11 +1519,11 @@ void Editor::RendererSettingsWindow::OnUpdate(HE::Timestep ts)
     {
         if (ImGui::BeginTable("Scene", 2, ImGuiTableFlags_SizingFixedFit))
         {
-            ImField::Text("Geometry Count", "%zd", ctx.rd.geometryCount);
-            ImField::Text("Instance Count", "%zd", ctx.rd.instanceCount);
-            ImField::Text("Material Count", "%zd", ctx.rd.materialCount);
-            ImField::Text("Texture Count", "%zd", ctx.rd.textureCount);
-            ImField::Text("Directional Light Count", "%zd", ctx.rd.sceneInfo.light.directionalLightCount);
+            //ImField::Text("Geometry Count", "%zd", ctx.rd.geometryCount);
+            //ImField::Text("Instance Count", "%zd", ctx.rd.instanceCount);
+            //ImField::Text("Material Count", "%zd", ctx.rd.materialCount);
+            //ImField::Text("Texture Count", "%zd", ctx.rd.textureCount);
+            //ImField::Text("Directional Light Count", "%zd", ctx.rd.sceneInfo.light.directionalLightCount);
 
             Assets::Scene* scene = ctx.assetManager.GetAsset<Assets::Scene>(ctx.sceneHandle);
             if (scene)
@@ -1579,11 +1532,13 @@ void Editor::RendererSettingsWindow::OnUpdate(HE::Timestep ts)
                 auto cameraComponentCount = scene->registry.view<Assets::CameraComponent>().size();
                 auto meshComponentCount = scene->registry.view<Assets::MeshComponent>().size();
                 auto directionalLightComponentCount = scene->registry.view<Assets::DirectionalLightComponent>().size();
+                auto dynamicSkyLightComponentCount = scene->registry.view<Assets::DynamicSkyLightComponent>().size();
 
                 ImField::Text("Transform Component Count", "%zd", transformComponentCount);
-                ImField::Text("Transform Component Count", "%zd", cameraComponentCount);
+                ImField::Text("Camera Component Count", "%zd", cameraComponentCount);
                 ImField::Text("Mesh Component Count", "%zd", meshComponentCount);
                 ImField::Text("Directional Light Component Count", "%zd", directionalLightComponentCount);
+                ImField::Text("Dynamic Sky Light Component Count", "%zd", dynamicSkyLightComponentCount);
             }
 
             ImGui::EndTable();

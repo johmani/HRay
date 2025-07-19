@@ -30,7 +30,12 @@ float Editor::OrbitCamera::ZoomSpeed(float distance)
 
 void Editor::OrbitCamera::OnUpdate(HE::Timestep ts)
 {
-    bool isIsWindowHovered = ImGui::IsWindowHovered();
+    bool isWindowFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows);
+    if (!isWindowFocused)
+    {
+        UpdateView();
+        return;
+    }
 
     auto mp = ImGui::GetMousePos();
     Math::float2 mouse{ mp.x, mp.y };
@@ -61,7 +66,7 @@ void Editor::OrbitCamera::OnUpdate(HE::Timestep ts)
         transform.rotation = Math::normalize(transform.rotation);
     }
 
-    if (isIsWindowHovered && Math::abs(ImGui::GetIO().MouseWheel) > 0.0f)
+    if (isWindowFocused && Math::abs(ImGui::GetIO().MouseWheel) > 0.0f)
     {
         distance -= ImGui::GetIO().MouseWheel * 0.5f;
         UpdateView();
@@ -116,7 +121,12 @@ void Editor::FlyCamera::OnUpdate(HE::Timestep ts)
 {
     using ImGuiMouseButton_::ImGuiMouseButton_Right;
 
-    bool isIsWindowHovered = ImGui::IsWindowHovered();
+    bool isWindowFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows);
+    if (!isWindowFocused)
+    {
+        UpdateView();
+        return;
+    }
 
     auto mp = ImGui::GetMousePos();
     Math::float2 mouse{ mp.x, mp.y };
@@ -129,12 +139,16 @@ void Editor::FlyCamera::OnUpdate(HE::Timestep ts)
     if (ImGui::IsKeyDown(ImGuiKey_LeftShift))
         mult = 4;
 
-    if (ImGui::IsMouseClicked(ImGuiMouseButton_Right))
-        HE::Input::SetCursorMode(HE::Cursor::Mode::Disabled);
+    if (ImGui::IsMouseDown(ImGuiMouseButton_Right))
+    {
+        ImGui::SetMouseCursor(ImGuiMouseCursor_None);
+    }
 
     if (ImGui::IsMouseReleased(ImGuiMouseButton_Right))
-        HE::Input::SetCursorMode(HE::Cursor::Mode::Normal);
-
+    {
+        ImGui::SetMouseCursor(ImGuiMouseCursor_Arrow);
+    }
+    
     if (ImGui::IsMouseDown(ImGuiMouseButton_Right))
     {
         if (ImGui::IsKeyDown(ImGuiKey_W))

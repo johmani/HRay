@@ -31,3 +31,5 @@
 #define Icon_Sun           ICON_FA_SUN
 #define Icon_Palette       ICON_FA_PALETTE
 #define Icon_Camera        ICON_FA_CAMERA
+#define Icon_TV            ICON_FA_TV
+#define Icon_Film          ICON_FA_FILM
