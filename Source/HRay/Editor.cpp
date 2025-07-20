@@ -464,6 +464,16 @@ void Editor::App::OnUpdate(const FrameInfo& info)
             HRay::BeginScene(ctx.rd, ctx.fd);
 
             {
+                auto& assetRegistry = Editor::GetAssetManager().registry;
+                auto view = Editor::GetAssetManager().registry.view<Assets::Material>();
+                for (auto e : view)
+                {
+                    Assets::Asset materalAsset = { e, &Editor::GetAssetManager() };
+                    HRay::SubmitMaterial(ctx.rd, ctx.fd, materalAsset);
+                }
+            }
+
+            {
                 auto view = scene->registry.view<Assets::MeshComponent>();
                 for (auto e : view)
                 {

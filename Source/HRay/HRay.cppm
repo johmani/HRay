@@ -95,18 +95,18 @@ export namespace HRay {
 
     struct MaterialData
     {
-        Math::float4 baseColor;
-        float metallic;								  // Range(0, 1)
-        float roughness;							  // Range(0, 1)
-        int uvSet;
+        Math::float4 baseColor = { 1.0f, 1.0f, 1.0f, 1.0f };
+        float metallic = 0.0f;
+        float roughness = 0.5f;
+        int uvSet = 0;
         int padding0;
 
-        Math::float3 emissiveColor;
+        Math::float3 emissiveColor = {0.0f, 0.0f, 0.0f};
 
-        uint32_t baseTextureIndex;
-        uint32_t emissiveTextureIndex;
-        uint32_t metallicRoughnessTextureIndex;
-        uint32_t normalTextureIndex;
+        uint32_t baseTextureIndex = c_Invalid;
+        uint32_t emissiveTextureIndex = c_Invalid;
+        uint32_t metallicRoughnessTextureIndex = c_Invalid;
+        uint32_t normalTextureIndex = c_Invalid;
 
         Math::float3x3 uvMat;
     };
@@ -130,7 +130,6 @@ export namespace HRay {
         nvrhi::SamplerHandle anisotropicWrapSampler;
         nvrhi::rt::PipelineHandle pipeline;
         nvrhi::rt::ShaderTableHandle shaderTable;
-        Assets::Material defultMaterial;
         HE::Ref<Assets::DescriptorTableManager> descriptorTable;
         nvrhi::BindingLayoutHandle bindlessLayout;
         nvrhi::BindingLayoutHandle postProcessingBindingLayout;
@@ -182,6 +181,7 @@ export namespace HRay {
     void BeginScene(RendererData& data, FrameData& frameData);
     void EndScene(RendererData& data, FrameData& frameData, nvrhi::ICommandList* commandList, const ViewDesc& viewDesc);
     void SubmitMesh(RendererData& data, FrameData& frameData, Assets::Asset asset, Assets::Mesh& mesh, Math::float4x4 wt, nvrhi::ICommandList* cl);
+    void SubmitMaterial(RendererData& data, FrameData& frameData, Assets::Asset materailAsset);
     void SubmitDirectionalLight(RendererData& data, FrameData& frameData, const Assets::DirectionalLightComponent& light, Math::float4x4 wt);
     void SubmitSkyLight(RendererData& data, FrameData& frameData, const Assets::DynamicSkyLightComponent& light);
     void ReleaseTexture(RendererData& data, Assets::Texture* texture);

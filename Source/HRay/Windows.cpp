@@ -34,6 +34,17 @@ void Editor::ViewPortWindow::OnUpdate(HE::Timestep ts)
             HRay::BeginScene(ctx.rd, fd);
 
             {
+                auto& assetRegistry = Editor::GetAssetManager().registry;
+                auto view = Editor::GetAssetManager().registry.view<Assets::Material>();
+                for (auto e : view)
+                {
+                    Assets::Asset materalAsset = { e, &Editor::GetAssetManager() };
+                    HRay::SubmitMaterial(ctx.rd, fd, materalAsset);
+                }
+            }
+
+            {
+
                 auto view = scene->registry.view<Assets::MeshComponent>();
                 for (auto e : view)
                 {

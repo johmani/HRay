@@ -16,6 +16,8 @@ import HE;
 import Assets;
 import std;
 
+constexpr int c_DefaultMaterialIndex = 0;
+
 struct MeshSourceBuffers
 {
     nvrhi::BufferHandle indexBuffer;
@@ -311,7 +313,7 @@ void HRay::BeginScene(RendererData& data, FrameData& frameData)
 
     frameData.geometryCount = 0;
     frameData.instanceCount = 0;
-    frameData.materialCount = 0;
+    frameData.materialCount = 1; // 0 for DefaultMaterial
     frameData.sceneInfo.light.directionalLightCount = 0;
 
     {
@@ -601,61 +603,16 @@ void HRay::SubmitMesh(RendererData& data, FrameData& frameData, Assets::Asset as
             // materials
             {
                 Assets::Material* material = data.am->GetAsset<Assets::Material>(geometry.materailHandle);
-                material = material ? material : &data.defultMaterial;
+                HE_ASSERT(material);
 
-                if (material)
+                if (frameData.materials.contains(geometry.materailHandle))
                 {
-                    if (!frameData.materials.contains(geometry.materailHandle))
-                    {
-                        frameData.materials[geometry.materailHandle] = frameData.materialCount;
-                        frameData.materialCount++;
-                    }
-
-                    Assets::Texture* baseTexture = data.am->GetAsset<Assets::Texture>(material->baseTextureHandle);
-                    if (baseTexture && baseTexture->texture && !baseTexture->descriptor.IsValid())
-                    {
-                        HE_ASSERT(baseTexture->texture);
-                        baseTexture->descriptor = data.descriptorTable->CreateDescriptorHandle(nvrhi::BindingSetItem::Texture_SRV(0, baseTexture->texture));
-                        data.textureCount++;
-                    }
-
-                    Assets::Texture* emissiveTexture = data.am->GetAsset<Assets::Texture>(material->emissiveTextureHandle);
-                    if (emissiveTexture && emissiveTexture->texture && !emissiveTexture->descriptor.IsValid())
-                    {
-                        HE_ASSERT(emissiveTexture->texture);
-                        emissiveTexture->descriptor = data.descriptorTable->CreateDescriptorHandle(nvrhi::BindingSetItem::Texture_SRV(0, emissiveTexture->texture));
-                        data.textureCount++;
-                    }
-
-                    Assets::Texture* metallicRoughnessTexture = data.am->GetAsset<Assets::Texture>(material->metallicRoughnessTextureHandle);
-                    if (metallicRoughnessTexture && metallicRoughnessTexture->texture && !metallicRoughnessTexture->descriptor.IsValid())
-                    {
-                        HE_ASSERT(metallicRoughnessTexture->texture);
-                        metallicRoughnessTexture->descriptor = data.descriptorTable->CreateDescriptorHandle(nvrhi::BindingSetItem::Texture_SRV(0, metallicRoughnessTexture->texture));
-                        data.textureCount++;
-                    }
-
-                    Assets::Texture* normalTexture = data.am->GetAsset<Assets::Texture>(material->normalTextureHandle);
-                    if (normalTexture && normalTexture->texture && !normalTexture->descriptor.IsValid())
-                    {
-                        HE_ASSERT(normalTexture->texture);
-                        normalTexture->descriptor = data.descriptorTable->CreateDescriptorHandle(nvrhi::BindingSetItem::Texture_SRV(0, normalTexture->texture));
-                        data.textureCount++;
-                    }
-
-                    uint32_t index                    = frameData.materials.at(geometry.materailHandle);
-                    auto& mat                         = frameData.materialData[index];
-                    mat.baseColor                     = material->baseColor;
-                    mat.metallic                      = material->metallic;
-                    mat.roughness                     = material->roughness;
-                    mat.uvSet                         = (int)material->uvSet;
-                    mat.emissiveColor                 = Math::convertSRGBToLinear(material->emissiveColor) * material->emissiveEV;
-                    mat.baseTextureIndex              = baseTexture              ? baseTexture->descriptor.Get()              : c_Invalid;
-                    mat.emissiveTextureIndex          = emissiveTexture          ? emissiveTexture->descriptor.Get()          : c_Invalid;
-                    mat.metallicRoughnessTextureIndex = metallicRoughnessTexture ? metallicRoughnessTexture->descriptor.Get() : c_Invalid;
-                    mat.normalTextureIndex            = normalTexture            ? normalTexture->descriptor.Get()            : c_Invalid;
-                    mat.uvMat                         = Math::CreateMat3(material->offset, material->rotation, material->scale);
-                    gd.materialIndex                  = index;
+                    uint32_t index = frameData.materials.at(geometry.materailHandle);
+                    gd.materialIndex = index;
+                }
+                else
+                {
+                    gd.materialIndex = c_DefaultMaterialIndex;
                 }
             }
 
@@ -664,6 +621,66 @@ void HRay::SubmitMesh(RendererData& data, FrameData& frameData, Assets::Asset as
     }
 
     frameData.instanceCount++;
+}
+
+void HRay::SubmitMaterial(RendererData& data, FrameData& frameData, Assets::Asset materailAsset)
+{
+    if (!materailAsset)
+        return;
+
+    auto& material = materailAsset.Get<Assets::Material>();
+    auto handle = materailAsset.GetHandle();
+
+    if (!frameData.materials.contains(handle))
+    {
+        frameData.materials[handle] = frameData.materialCount;
+        frameData.materialCount++;
+    }
+
+    Assets::Texture* baseTexture = data.am->GetAsset<Assets::Texture>(material.baseTextureHandle);
+    if (baseTexture && baseTexture->texture && !baseTexture->descriptor.IsValid())
+    {
+        HE_ASSERT(baseTexture->texture);
+        baseTexture->descriptor = data.descriptorTable->CreateDescriptorHandle(nvrhi::BindingSetItem::Texture_SRV(0, baseTexture->texture));
+        data.textureCount++;
+    }
+
+    Assets::Texture* emissiveTexture = data.am->GetAsset<Assets::Texture>(material.emissiveTextureHandle);
+    if (emissiveTexture && emissiveTexture->texture && !emissiveTexture->descriptor.IsValid())
+    {
+        HE_ASSERT(emissiveTexture->texture);
+        emissiveTexture->descriptor = data.descriptorTable->CreateDescriptorHandle(nvrhi::BindingSetItem::Texture_SRV(0, emissiveTexture->texture));
+        data.textureCount++;
+    }
+
+    Assets::Texture* metallicRoughnessTexture = data.am->GetAsset<Assets::Texture>(material.metallicRoughnessTextureHandle);
+    if (metallicRoughnessTexture && metallicRoughnessTexture->texture && !metallicRoughnessTexture->descriptor.IsValid())
+    {
+        HE_ASSERT(metallicRoughnessTexture->texture);
+        metallicRoughnessTexture->descriptor = data.descriptorTable->CreateDescriptorHandle(nvrhi::BindingSetItem::Texture_SRV(0, metallicRoughnessTexture->texture));
+        data.textureCount++;
+    }
+
+    Assets::Texture* normalTexture = data.am->GetAsset<Assets::Texture>(material.normalTextureHandle);
+    if (normalTexture && normalTexture->texture && !normalTexture->descriptor.IsValid())
+    {
+        HE_ASSERT(normalTexture->texture);
+        normalTexture->descriptor = data.descriptorTable->CreateDescriptorHandle(nvrhi::BindingSetItem::Texture_SRV(0, normalTexture->texture));
+        data.textureCount++;
+    }
+
+    uint32_t index = frameData.materials.at(handle);
+    auto& mat = frameData.materialData[index];
+    mat.baseColor = material.baseColor;
+    mat.metallic = material.metallic;
+    mat.roughness = material.roughness;
+    mat.uvSet = (int)material.uvSet;
+    mat.emissiveColor = Math::convertSRGBToLinear(material.emissiveColor) * material.emissiveEV;
+    mat.baseTextureIndex = baseTexture ? baseTexture->descriptor.Get() : c_Invalid;
+    mat.emissiveTextureIndex = emissiveTexture ? emissiveTexture->descriptor.Get() : c_Invalid;
+    mat.metallicRoughnessTextureIndex = metallicRoughnessTexture ? metallicRoughnessTexture->descriptor.Get() : c_Invalid;
+    mat.normalTextureIndex = normalTexture ? normalTexture->descriptor.Get() : c_Invalid;
+    mat.uvMat = Math::CreateMat3(material.offset, material.rotation, material.scale);
 }
 
 void HRay::SubmitDirectionalLight(RendererData& data, FrameData& frameData, const Assets::DirectionalLightComponent& light, Math::float4x4 wt)
