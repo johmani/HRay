@@ -26,8 +26,19 @@ export namespace HRay {
             Math::float3 cameraPosition;
             uint32_t frameIndex;
 
+            Math::float3 front; int frontPadding;
+            Math::float3 up;    int upPadding;
+            Math::float3 right; int rightPadding;
+
             Math::float2 viewSize;
             Math::float2 viewSizeInv;
+
+            Math::float3 focalCenter; 
+            int focalCenterPadding;
+
+            float halfWidth;
+            float halfHeight;
+            Math::float2 halfWidthHeightPadding;
 
             float minDistance = 0.001f;
             float maxDistance = 1000.0f;

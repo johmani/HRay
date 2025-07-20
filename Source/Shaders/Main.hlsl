@@ -11,8 +11,18 @@ struct SceneInfo
         float3 cameraPosition;
         int frameIndex;
 
+        float3 front; int frontPadding;
+        float3 up;    int upPadding;
+        float3 right; int rightPadding;
+
         float2 viewSize;
         float2 viewSizeInv;
+
+        float3 focalCenter; int focalCenterPadding;
+
+        float halfWidth;
+        float halfHeight;
+        float2 halfWidthHeightPadding;
 
         float minDistance;
         float maxDistance;
@@ -293,17 +303,15 @@ void RayGen()
     primaryRay.TMin = near;
     primaryRay.TMax = far;
 
-    float3 right, up;
     float3 focusPoint;
+    float3 front = sceneInfoBuffer.view.front;
+    float3 up    = sceneInfoBuffer.view.up;
+    float3 right = sceneInfoBuffer.view.right;
+
     if(sceneInfoBuffer.view.enableDepthOfField)
     {
-        GetCameraRightUp(sceneInfoBuffer.view.clipToWorld, right, up);
-        float3 focalCenter = (sceneInfoBuffer.view.cameraPosition + normalize(cross(up, right)) * sceneInfoBuffer.view.focusDistance);
-        float aspect = sceneInfoBuffer.view.viewSize.x / sceneInfoBuffer.view.viewSize.y;
-        float halfHeight = tan(sceneInfoBuffer.view.fov * 0.5) * sceneInfoBuffer.view.focusDistance;
-        float halfWidth = halfHeight * aspect;
-        float3 offset = ndc.x * halfWidth * right + ndc.y * halfHeight * up;
-        focusPoint = focalCenter + offset;
+        float3 offset = ndc.x * sceneInfoBuffer.view.halfWidth * right + ndc.y * sceneInfoBuffer.view.halfHeight * up;
+        focusPoint = sceneInfoBuffer.view.focalCenter + offset;
     }
 
     float3 finalColor = 0;
@@ -311,11 +319,12 @@ void RayGen()
     for (uint i = 0; i < sceneInfoBuffer.settings.maxSamples; i++)
     {
         rngState += (sceneInfoBuffer.view.frameIndex + i) * 895623;
-        float2 originOffset = RandomPointInCircle(rngState) * sceneInfoBuffer.view.focusFalloff / sceneInfoBuffer.view.viewSize.x;
-        float2 targetOffset   = RandomPointInCircle(rngState) * sceneInfoBuffer.view.apertureRadius / sceneInfoBuffer.view.viewSize.x;
-        
+       
         if (sceneInfoBuffer.view.enableDepthOfField)
         {
+            float2 originOffset = RandomPointInCircle(rngState) * sceneInfoBuffer.view.focusFalloff / sceneInfoBuffer.view.viewSize.x;
+            float2 targetOffset = RandomPointInCircle(rngState) * sceneInfoBuffer.view.apertureRadius / sceneInfoBuffer.view.viewSize.x;
+
             rayOrigin    = sceneInfoBuffer.view.cameraPosition + right * originOffset.x + up * originOffset.y;
             rayDirection = normalize((focusPoint + right * targetOffset.x + up * targetOffset.y) - rayOrigin);
         }

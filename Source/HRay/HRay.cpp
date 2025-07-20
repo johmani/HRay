@@ -14,6 +14,7 @@ import HRay;
 import nvrhi;
 import HE;
 import Assets;
+import Math;
 import std;
 
 constexpr int c_DefaultMaterialIndex = 0;
@@ -29,6 +30,21 @@ struct MeshSourceDescriptors
     Assets::DescriptorHandle indexBufferDescriptor;
     Assets::DescriptorHandle vertexBufferDescriptor;
 };
+
+static void GetCameraBasis(const Math::float4x4& clipToWorld, Math::float3& camFront, Math::float3& camUp, Math::float3& camRight)
+{
+    Math::float4 originCS = Math::float4(0, 0, 0, 1);
+    Math::float4 rightCS = Math::float4(1, 0, 0, 1);
+    Math::float4 upCS = Math::float4(0, 1, 0, 1);
+
+    Math::float3 worldOrigin = Math::float3(clipToWorld * originCS);
+    Math::float3 worldRight = Math::float3(clipToWorld * rightCS);
+    Math::float3 worldUp = Math::float3(clipToWorld * upCS);
+
+    camRight = Math::normalize(worldRight - worldOrigin);
+    camUp = Math::normalize(worldUp - worldOrigin);
+    camFront = Math::normalize(Math::cross(camUp, camRight));
+}
 
 // Reference: https://github.com/google/filament/blob/b15ae15f39181e1a16fe248bd022fe4c36eab6de/filament/src/Exposure.cpp#L150
 static float Luminance(float const ev100) noexcept 
@@ -345,14 +361,23 @@ void HRay::EndScene(RendererData& data, FrameData& frameData, nvrhi::ICommandLis
 
     // SceneInfo
     {
+        float fov = Math::radians(viewDesc.fov);
+        float aspect = (float)viewDesc.width / (float)viewDesc.height;
+        float halfHeight = tan(fov * 0.5f) * frameData.sceneInfo.view.focusDistance;
+        float halfWidth = halfHeight * aspect;
+
         frameData.sceneInfo.view.worldToView = viewDesc.view;
         frameData.sceneInfo.view.viewToClip = viewDesc.projection;
         frameData.sceneInfo.view.clipToWorld = Math::inverse(viewDesc.projection * viewDesc.view);
         frameData.sceneInfo.view.cameraPosition = viewDesc.cameraPosition;
+        GetCameraBasis(frameData.sceneInfo.view.clipToWorld, frameData.sceneInfo.view.front, frameData.sceneInfo.view.up, frameData.sceneInfo.view.right);
         frameData.sceneInfo.view.viewSize = Math::float2(viewDesc.width, viewDesc.height);
-        frameData.sceneInfo.view.fov = Math::radians(viewDesc.fov);
         frameData.sceneInfo.view.viewSizeInv = 1.0f / frameData.sceneInfo.view.viewSize;
         frameData.sceneInfo.view.frameIndex = frameData.frameIndex;
+        frameData.sceneInfo.view.halfWidth = halfWidth;
+        frameData.sceneInfo.view.halfHeight = halfHeight;
+        frameData.sceneInfo.view.focalCenter = viewDesc.cameraPosition + frameData.sceneInfo.view.front * frameData.sceneInfo.view.focusDistance;
+        frameData.sceneInfo.view.fov = fov;
 
         commandList->writeBuffer(frameData.sceneInfoBuffer, &frameData.sceneInfo, sizeof(SceneInfo));
     }
