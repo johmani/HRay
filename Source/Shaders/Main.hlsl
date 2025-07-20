@@ -226,12 +226,8 @@ GeometrySample SampleGeometry(
     return gs;
 }
 
-RayDesc CreatePrimaryRay(float2 id, float4x4 clipToWorld, float3 cameraPosition, float2 viewSizeInv)
+RayDesc CreatePrimaryRay(float2 uv, float4x4 clipToWorld, float3 cameraPosition)
 {
-    float2 uv = (float2(id.xy) + 0.5) * viewSizeInv;
-    uv.y = 1 - uv.y;
-    uv = uv * 2.0 - 1.0;
-
     float4 clipPos = float4(uv, 1.0, 1.0);
 
     float4 worldPos = mul(clipToWorld, clipPos);
@@ -288,15 +284,15 @@ float3 EvaluateEnvironmentLight(float3 rayOrigin, float3 rayDirection)
 [shader("raygeneration")]
 void RayGen()
 {
-    uint2 rayIndex       = DispatchRaysIndex().xy;
+    uint2 rayIndex = DispatchRaysIndex().xy;
+    float2 ndc     = (float2(rayIndex) + 0.5) * sceneInfoBuffer.view.viewSizeInv;
+    ndc            = ndc * 2.0 - 1.0;
+    ndc.y          = -ndc.y; // Flip Y for DX
+
     uint rngState        = rayIndex.y * (uint)sceneInfoBuffer.view.viewSize.x + rayIndex.x;
-    RayDesc primaryRay   = CreatePrimaryRay(float2(rayIndex), sceneInfoBuffer.view.clipToWorld, sceneInfoBuffer.view.cameraPosition, sceneInfoBuffer.view.viewSizeInv);
+    RayDesc primaryRay   = CreatePrimaryRay(ndc, sceneInfoBuffer.view.clipToWorld, sceneInfoBuffer.view.cameraPosition);
     float3 rayOrigin     = primaryRay.Origin;
     float3 rayDirection  = primaryRay.Direction;
-
-    float2 uv  = (float2(rayIndex) + 0.5) / sceneInfoBuffer.view.viewSize;
-    float2 ndc = uv * 2.0 - 1.0;
-    ndc.y      = -ndc.y; // Flip Y for DX
 
     float near = sceneInfoBuffer.view.minDistance;
     float far  = sceneInfoBuffer.view.maxDistance;
