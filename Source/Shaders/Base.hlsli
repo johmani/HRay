@@ -4,6 +4,7 @@
 
 #pragma region Constants
 
+
 #define INSTANCE_MASK_OPAQUE                1
 #define INSTANCE_MASK_PARTICLE_GEOMETRY     2
 #define INSTANCE_MASK_INTERSECTION_PARTICLE 4
@@ -11,6 +12,7 @@
 static const float c_RayPosNormalOffset = 0.001;
 static const float c_PI = 3.14159265;
 static const float c_2PI = 2.0f * c_PI;
+static const float c_One_Over_PI = 1.0 / c_PI;
 
 static const uint c_Invalid = ~0u;
 static const uint c_SizeOfTriangleIndices = 12;
@@ -21,9 +23,8 @@ static const uint c_SizeOfJointIndices = 8;
 static const uint c_SizeOfJointWeights = 16;
 
 #pragma endregion
-
-
 #pragma region Macros
+
 
 #ifdef SPIRV
     #define VK_PUSH_CONSTANT [[vk::push_constant]]
@@ -33,10 +34,10 @@ static const uint c_SizeOfJointWeights = 16;
     #define VK_BINDING(reg,dset) 
 #endif
 
+
 #pragma endregion
-
-
 #pragma region Utils
+
 
 float4x4 inverse(float4x4 m)
 {
@@ -128,7 +129,7 @@ float RandomFloat(inout uint state)
 
 float RandomFloatNormalDistribution(inout uint state)
 {
-    float theta = 2 * 3.1415926 * RandomFloat(state);
+    float theta = c_2PI * RandomFloat(state);
     float rho = sqrt(-2 * log(RandomFloat(state)));
     return rho * cos(theta);
 }
@@ -143,7 +144,7 @@ float3 RandomDirection(inout uint state)
 
 float2 RandomPointInCircle(inout uint rngState)
 {
-    float angle = RandomFloat(rngState) * 2 * c_PI;
+    float angle = RandomFloat(rngState) * c_2PI;
     float2 pointOnCircle = float2(cos(angle), sin(angle));
     return pointOnCircle * sqrt(RandomFloat(rngState));
 }
@@ -180,6 +181,7 @@ void GetCameraRightUp(float4x4 clipToWorld, out float3 camRight, out float3 camU
     camRight = normalize(worldRight - worldOrigin);
     camUp = normalize(worldUp - worldOrigin);
 }
+
 
 #pragma endregion
 

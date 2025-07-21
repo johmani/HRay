@@ -138,6 +138,8 @@ struct HitInfo
     float distance;
     float metallic;
     float roughness;
+
+    bool HasHit() { return distance < 1000;}
 };
 
 struct GeometrySample
@@ -345,7 +347,7 @@ void RayGen()
             if (sceneInfoBuffer.view.enableVisualFocusDistance && bounce == 0 && length(hitPoint - focusPoint) <= 0.2)
                 resultColor = lerp(resultColor, float3(0, 1, 0), 0.1);
 
-            if (payload.distance < 1000)
+            if (payload.HasHit())
             {
                 rayOrigin = hitPoint + payload.normal * c_RayPosNormalOffset;
                 float3 diffuse = normalize(payload.normal + RandomDirection(rngState));
