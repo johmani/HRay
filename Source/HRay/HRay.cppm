@@ -42,7 +42,7 @@ export namespace HRay {
 
             float minDistance = 0.001f;
             float maxDistance = 1000.0f;
-            float apertureRadius = 1.0f;
+            float apertureRadius = 0.003f;
             float focusFalloff = 0.0f;
 
             float focusDistance = 10.0f;
