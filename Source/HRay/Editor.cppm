@@ -357,6 +357,8 @@ export namespace Editor {
     Context& GetContext();
     Assets::AssetManager& GetAssetManager();
 
+    ImVec4 GetColor(int c);
+
     Assets::Entity GetSceneCamera(Assets::Scene* scene);
    
     void SetRendererToSceneCameraProp(HRay::FrameData& frameData, const Assets::CameraComponent& c);

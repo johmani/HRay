@@ -926,6 +926,8 @@ Editor::Context& Editor::GetContext() { return *App::s_Context; }
 
 Assets::AssetManager& Editor::GetAssetManager() { return GetContext().assetManager; }
 
+ImVec4 Editor::GetColor(int c) { return Editor::GetContext().colors[c]; }
+
 Assets::Entity Editor::GetSceneCamera(Assets::Scene* scene)
 {
     auto camView = scene->registry.view<Assets::CameraComponent>();
