@@ -164,16 +164,15 @@ void Editor::EndMainMenuBar()
     ImGui::EndMainMenuBar();
 }
 
-void Editor::BeginChildView(const char* str_id, Editor::Corner& corner)
+void Editor::BeginChildView(const char* str_id, Editor::Corner& corner, ImVec2 padding)
 {
     auto& io = ImGui::GetIO();
     auto& style = ImGui::GetStyle();
 
     {
         bool isHiddenTabBar = ImGui::GetCurrentContext()->CurrentWindow->DockNode ? ImGui::GetCurrentContext()->CurrentWindow->DockNode->IsHiddenTabBar() : false;
-        float padding = 5 * io.FontGlobalScale;
-       
-        ImVec2 offset = padding;
+
+        ImVec2 offset = padding * io.FontGlobalScale;
 
         if (corner == Editor::Corner::TopLeft || corner == Editor::Corner::TopRight)
         {

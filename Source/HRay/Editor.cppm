@@ -494,7 +494,7 @@ export namespace Editor {
 
     bool BeginMainMenuBar(bool customTitlebar, ImTextureRef icon, ImTextureRef close, ImTextureRef min, ImTextureRef max, ImTextureRef res);
     void EndMainMenuBar();
-    void BeginChildView(const char* str_id, Corner& location);
+    void BeginChildView(const char* str_id, Corner& location, ImVec2 padding = 5);
     void EndChildView();
 
     std::string IncrementString(const std::string& str);
