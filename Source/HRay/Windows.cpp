@@ -1,14 +1,44 @@
 #include "HydraEngine/Base.h"
 #include "HRay/Icons.h"
 
+#if NVRHI_HAS_D3D12
+#include "Embeded/dxil/Compositing_Main.bin.h"
+#endif
+
+#if NVRHI_HAS_VULKAN
+#include "Embeded/spirv/Compositing_Main.bin.h"
+#endif
+
 import HE;
+import nvrhi;
 import Assets;
 import ImGui;
 import Editor;
 import std;
+import Tiny2D;
 
 #pragma region ViewPortWindow
 
+static void CreateOrResizeRenderTarget(Editor::ViewPortWindow* viewPortWindow, nvrhi::Format format, uint32_t width, uint32_t height)
+{
+    HE_PROFILE_FUNCTION();
+
+    auto& ctx = Editor::GetContext();
+
+    nvrhi::TextureDesc desc;
+    desc.width = width;
+    desc.height = height;
+    desc.initialState = nvrhi::ResourceStates::UnorderedAccess;
+    desc.format = format;
+    desc.keepInitialState = true;
+    desc.isRenderTarget = false;
+    desc.isUAV = true;
+
+    desc.debugName = "viewPortOutput";
+    viewPortWindow->compositeTarget = ctx.device->createTexture(desc);
+
+    viewPortWindow->compositeBindingSet.Reset();
+}
 
 void Editor::ViewPortWindow::OnCreate()
 {
@@ -17,12 +47,48 @@ void Editor::ViewPortWindow::OnCreate()
     orbitCamera = HE::CreateScope<Editor::OrbitCamera>(60.0f, float(width) / float(height), 0.1f, 1000.0f);
     flyCamera = HE::CreateScope<Editor::FlyCamera>(60.0f, float(width) / float(height), 0.1f, 1000.0f);
     editorCamera = orbitCamera;
+
+    auto& ctx = GetContext();
+
+    // Binding Layout
+    {
+        HE_PROFILE_SCOPE("createBindingLayout");
+
+        nvrhi::BindingLayoutDesc desc;
+        desc.visibility = nvrhi::ShaderType::All;
+        desc.bindings = {
+           nvrhi::BindingLayoutItem::Texture_SRV(0),
+           nvrhi::BindingLayoutItem::Texture_SRV(1),
+           nvrhi::BindingLayoutItem::Texture_SRV(2),
+           nvrhi::BindingLayoutItem::Texture_SRV(3),
+           nvrhi::BindingLayoutItem::Texture_UAV(0),
+        };
+
+        compositeBindingLayout = ctx.device->createBindingLayout(desc);
+        HE_ASSERT(compositeBindingLayout);
+    }
+
+    // Shader
+    {
+        nvrhi::ShaderDesc desc;
+        desc.shaderType = nvrhi::ShaderType::Compute;
+        desc.entryName = "Main";
+        cs = HE::RHI::CreateStaticShader(ctx.device, STATIC_SHADER(Compositing_Main), nullptr, desc);
+    }
+
+    // Compute
+    {
+        computePipeline = ctx.device->createComputePipeline({ cs, { compositeBindingLayout } });
+        HE_VERIFY(computePipeline);
+    }
 }
 
 void Editor::ViewPortWindow::OnUpdate(HE::Timestep ts)
 {
     auto& ctx = GetContext();
     Assets::Scene* scene = ctx.assetManager.GetAsset<Assets::Scene>(ctx.sceneHandle);
+
+    bool enableMeshDebuging = debug.enableMeshNormals || debug.enableMeshTangents || debug.enableMeshBitangents || debug.enableMeshAABB;
 
     {
         HE_PROFILE_SCOPE("Render");
@@ -31,7 +97,68 @@ void Editor::ViewPortWindow::OnUpdate(HE::Timestep ts)
         {
             Assets::Entity mainCameraEntity = Editor::GetSceneCamera(scene);
 
+            Math::float4x4 viewMatrix;
+            Math::float4x4 projection;
+            Math::vec3 camPos;
+            float fov;
+
+            if (previewMode && mainCameraEntity && cameraAnimation.state & Animation::None)
+            {
+                auto& c = mainCameraEntity.GetComponent<Assets::CameraComponent>();
+                auto wt = mainCameraEntity.GetWorldSpaceTransformMatrix();
+                viewMatrix = Math::inverse(wt);
+                fov = c.perspectiveFieldOfView;
+
+                Math::vec3 s, skew;
+                Math::quat quaternion;
+                Math::vec4 perspective;
+                Math::decompose(wt, s, quaternion, camPos, skew, perspective);
+
+                float aspectRatio = (float)width / (float)height;
+
+                if (c.projectionType == Assets::CameraComponent::ProjectionType::Perspective)
+                {
+                    projection = Math::perspective(glm::radians(c.perspectiveFieldOfView), aspectRatio, c.perspectiveNear, c.perspectiveFar);
+                }
+                else
+                {
+                    float orthoLeft = -c.orthographicSize * aspectRatio * 0.5f;
+                    float orthoRight = c.orthographicSize * aspectRatio * 0.5f;
+                    float orthoBottom = -c.orthographicSize * 0.5f;
+                    float orthoTop = c.orthographicSize * 0.5f;
+                    projection = Math::ortho(orthoLeft, orthoRight, orthoBottom, orthoTop, c.orthographicNear, c.orthographicFar);
+                }
+
+                Editor::SetRendererToSceneCameraProp(fd, c);
+            }
+            else
+            {
+                viewMatrix = editorCamera->view.view;
+                projection = editorCamera->view.projection;
+                camPos = editorCamera->transform.position;
+                fov = editorCamera->view.fov;
+            }
+
             HRay::BeginScene(ctx.rd, fd);
+
+            if (enableMeshDebuging)
+            {
+                auto format = HRay::GetColorTarget(fd)->getDesc().format;
+
+                if (!compositeTarget)
+                    CreateOrResizeRenderTarget(this, format, width, height);
+
+                Tiny2D::BeginScene(
+                    tiny2DView,
+                    ctx.commandList,
+                    {
+                        projection * viewMatrix,
+                        { width, height },
+                        format,
+                        8
+                    }
+                );
+            }
 
             {
                 auto& assetRegistry = Editor::GetAssetManager().registry;
@@ -59,6 +186,79 @@ void Editor::ViewPortWindow::OnUpdate(HE::Timestep ts)
                         auto& mesh = meshSource.meshes[dm.meshIndex];
 
                         HRay::SubmitMesh(ctx.rd, fd, asset, mesh, wt, ctx.commandList);
+
+                        if (debug.enableMeshAABB)
+                        {
+                            Math::box3 box = Math::ConvertBoxToWorldSpace(wt, mesh.aabb);
+                            Tiny2D::DrawAABB({ 
+                                .min = box.min - 0.001f, 
+                                .max = box.max + 0.001f, 
+                                .color = Math::float4(1.0f,1.0f,1.0f, debug.colorOpacity), 
+                                .thickness = 1
+                            });
+                        }
+
+                        if (debug.enableMeshNormals || debug.enableMeshTangents || debug.enableMeshBitangents)
+                        {
+                            auto positions = mesh.GetAttributeSpan<Math::float3>(Assets::VertexAttribute::Position);
+                            auto normals = mesh.GetAttributeSpan<uint32_t>(Assets::VertexAttribute::Normal);
+                            auto tangents = mesh.GetAttributeSpan<uint32_t>(Assets::VertexAttribute::Tangent);
+
+                            if (debug.enableMeshBitangents || debug.enableMeshTangents || debug.enableMeshNormals)
+                            {
+                                for (uint32_t i = 0; i < positions.size(); i++)
+                                {
+                                    Math::float4 pos = wt * Math::float4(positions[i], 1.0f);
+                                    Math::float3 position = { pos.x, pos.y, pos.z };
+
+                                    Math::float3 normal = Math::snorm8ToVector<3>(normals[i]);
+                                    normal = wt * Math::float4(normal, 0.0f);
+                                    normal = Math::normalize(normal);
+
+                                    Math::float4 tang = Math::snorm8ToVector<4>(tangents[i]);
+                                    Math::float4 tangent = { tang.x, tang.y, tang.z, tang.w };
+
+                                    Math::float3 tangentVec = wt * Math::float4(tangent.x, tangent.y, tangent.z, 0);
+                                    Math::float3 bitangentVec = Math::cross(normal, tangentVec) * tangent.w;
+
+                                    tangentVec = Math::normalize(tangentVec);
+                                    bitangentVec = Math::normalize(bitangentVec);
+
+                                    if (debug.enableMeshNormals)
+                                    {
+                                        Tiny2D::DrawLine({
+                                            .from = position,
+                                            .to = position + normal * debug.lineLength,
+                                            .fromColor = Math::float4(1.0f,0.0f, 0.0f, debug.colorOpacity),
+                                            .toColor = Math::float4(1.0f,0.0f, 0.0f, debug.colorOpacity),
+                                            .thickness = 1.0f
+                                        });
+                                    }
+
+                                    if (debug.enableMeshTangents)
+                                    {
+                                        Tiny2D::DrawLine({
+                                            .from = position,
+                                            .to = position + tangentVec * debug.lineLength,
+                                            .fromColor = Math::float4(0.0f,1.0f, 0.0f, debug.colorOpacity),
+                                            .toColor = Math::float4(0.0f, 1.0f, 0.0f, debug.colorOpacity),
+                                            .thickness = 1.0f
+                                        });
+                                    }
+
+                                    if (debug.enableMeshBitangents)
+                                    {
+                                        Tiny2D::DrawLine({
+                                            .from = position,
+                                            .to = position + bitangentVec * debug.lineLength,
+                                            .fromColor = Math::float4(0.0f, 0.0f, 1.0f, debug.colorOpacity),
+                                            .toColor = Math::float4(0.0f, 0.0f, 1.0f, debug.colorOpacity),
+                                            .thickness = 1.0f
+                                        });
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -88,41 +288,42 @@ void Editor::ViewPortWindow::OnUpdate(HE::Timestep ts)
                 fd.sceneInfo.light.enableEnvironmentLight = view.size();
             }
 
-            if (previewMode && mainCameraEntity && cameraAnimation.state & Animation::None)
+            HRay::EndScene(ctx.rd, fd, ctx.commandList, { viewMatrix, projection, camPos, fov, (uint32_t)width, (uint32_t)height });
+
+            if (enableMeshDebuging)
             {
-                auto& c = mainCameraEntity.GetComponent<Assets::CameraComponent>();
-                auto wt = mainCameraEntity.GetWorldSpaceTransformMatrix();
-                Math::float4x4 viewMatrix = Math::inverse(wt);
-                float fov = c.perspectiveFieldOfView;
+                Tiny2D::EndScene();
 
-                Math::vec3 camPos, s, skew;
-                Math::quat quaternion;
-                Math::vec4 perspective;
-                Math::decompose(wt, s, quaternion, camPos, skew, perspective);
-
-                float aspectRatio = (float)width / (float)height;
-
-                Math::float4x4 projection;
-                if (c.projectionType == Assets::CameraComponent::ProjectionType::Perspective)
+                HE_ASSERT(compositeTarget);
+                if ((width > 0 && height > 0) && (width != compositeTarget->getDesc().width || height != compositeTarget->getDesc().height))
                 {
-                    projection = Math::perspective(glm::radians(c.perspectiveFieldOfView), aspectRatio, c.perspectiveNear, c.perspectiveFar);
+                    auto format = HRay::GetColorTarget(fd)->getDesc().format;
+                    CreateOrResizeRenderTarget(this, format, width, height);
                 }
-                else
-                {
-                    float orthoLeft = -c.orthographicSize * aspectRatio * 0.5f;
-                    float orthoRight = c.orthographicSize * aspectRatio * 0.5f;
-                    float orthoBottom = -c.orthographicSize * 0.5f;
-                    float orthoTop = c.orthographicSize * 0.5f;
-                    projection = Math::ortho(orthoLeft, orthoRight, orthoBottom, orthoTop, c.orthographicNear, c.orthographicFar);
-                }
-                SetRendererToSceneCameraProp(fd, c);
 
-                HRay::EndScene(ctx.rd, fd, ctx.commandList, { viewMatrix, projection, camPos, c.perspectiveFieldOfView, (uint32_t)width, (uint32_t)height });
+                if (!compositeBindingSet)
+                {
+                    HE_VERIFY(HRay::GetColorTarget(fd));
+                    HE_VERIFY(HRay::GetDepthTarget(fd));
+                    HE_VERIFY(Tiny2D::GetColorTarget(tiny2DView));
+                    HE_VERIFY(Tiny2D::GetDepthTarget(tiny2DView));
+
+                    nvrhi::BindingSetDesc bindingSetDesc;
+                    bindingSetDesc.bindings = {
+                        nvrhi::BindingSetItem::Texture_SRV(0, Tiny2D::GetColorTarget(tiny2DView)),
+                        nvrhi::BindingSetItem::Texture_SRV(1, Tiny2D::GetDepthTarget(tiny2DView)),
+                        nvrhi::BindingSetItem::Texture_SRV(2, HRay::GetColorTarget(fd)),
+                        nvrhi::BindingSetItem::Texture_SRV(3, HRay::GetDepthTarget(fd)),
+                        nvrhi::BindingSetItem::Texture_UAV(0, compositeTarget),
+                    };
+
+                    compositeBindingSet = ctx.device->createBindingSet(bindingSetDesc, compositeBindingLayout);
+                }
+
+                ctx.commandList->setComputeState({ computePipeline , { compositeBindingSet } });
+                ctx.commandList->dispatch(width / 8, height / 8);
             }
-            else
-            {
-                HRay::EndScene(ctx.rd, fd, ctx.commandList, { editorCamera->view.view, editorCamera->view.projection , editorCamera->transform.position, editorCamera->view.fov, (uint32_t)width, (uint32_t)height });
-            }
+
 
             if (cameraPrevPos != editorCamera->transform.position || cameraPrevRot != editorCamera->transform.rotation)
             {
@@ -182,19 +383,14 @@ void Editor::ViewPortWindow::OnUpdate(HE::Timestep ts)
 
     {
         bool isWindowFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows);
-       
+        auto viewportMinRegion = ImGui::GetCursorScreenPos();
+        auto viewportMaxRegion = ImGui::GetCursorScreenPos() + ImGui::GetContentRegionAvail();
+        auto viewportOffset = ImGui::GetWindowPos();
+
         auto& io = ImGui::GetIO();
         auto& style = ImGui::GetStyle();
         float dpiScale = ImGui::GetWindowDpiScale();
         float scale = ImGui::GetIO().FontGlobalScale * dpiScale;
-
-        auto size = ImGui::GetContentRegionAvail();
-        uint32_t w = HE::AlignUp(uint32_t(size.x), 2u);
-        uint32_t h = HE::AlignUp(uint32_t(size.y), 2u);
-
-        auto viewportMinRegion = ImGui::GetCursorScreenPos();
-        auto viewportMaxRegion = ImGui::GetCursorScreenPos() + ImGui::GetContentRegionAvail();
-        auto viewportOffset = ImGui::GetWindowPos();
 
         {
             ImGui::ScopedStyle ss(ImGuiStyleVar_WindowPadding, ImVec2(8, 8));
@@ -226,6 +422,10 @@ void Editor::ViewPortWindow::OnUpdate(HE::Timestep ts)
             }
         }
 
+        auto size = ImGui::GetContentRegionAvail();
+        uint32_t w = std::max(8u, HE::AlignUp(uint32_t(size.x), 8u));
+        uint32_t h = std::max(8u, HE::AlignUp(uint32_t(size.y), 8u));
+
         if (width != w || height != h)
         {
             width = w;
@@ -238,12 +438,15 @@ void Editor::ViewPortWindow::OnUpdate(HE::Timestep ts)
             editorCamera->OnUpdate(ts);
         }
 
-        ImVec2 pos;
-        ImVec2 viewSize;
-
-        if (fd.renderTarget)
+        if (compositeTarget && enableMeshDebuging)
         {
-            ImGui::Image(fd.renderTarget.Get(), size);
+            ImGui::Image(compositeTarget.Get(), size);
+        }
+        
+        auto rt = HRay::GetColorTarget(fd);
+        if (rt && !enableMeshDebuging)
+        {
+            ImGui::Image(rt, size);
         }
 
         // transform Gizmo
@@ -307,40 +510,126 @@ void Editor::ViewPortWindow::OnUpdate(HE::Timestep ts)
 
         // Toolbar
         {
-            ImGui::ScopedFont sf(Editor::FontType::Blod, Editor::FontSize::BodyMedium);
-
             Editor::BeginChildView("Toolbar", toolbarCorner);
 
-            ImVec2 buttonSize = ImVec2(28, 28) * io.FontGlobalScale + style.FramePadding * 2;
-
-            if (ImGui::SelectableButton(Icon_Arrow, buttonSize, gizmoType == -1))
             {
-                if (!ImGuizmo::IsUsing())
-                    gizmoType = -1;
+                ImGui::ScopedFont sf(Editor::FontType::Blod, Editor::FontSize::Caption);
+                ImGui::ScopedStyle ss(ImGuiStyleVar_ButtonTextAlign, ImVec2(0.6f, 0.6f));
+                ImGui::ScopedStyle ssis(ImGuiStyleVar_ItemSpacing, ImVec2(1.0f, 1.0f));
+                ImVec2 buttonSize = ImVec2(24, 24) * io.FontGlobalScale + style.FramePadding * 2;
+
+                if (ImGui::SelectableButton(Icon_Arrow, buttonSize, gizmoType == -1))
+                {
+                    if (!ImGuizmo::IsUsing())
+                        gizmoType = -1;
+                }
+
+                if (ImGui::SelectableButton(Icon_Move, buttonSize, gizmoType == ImGuizmo::OPERATION::TRANSLATE))
+                {
+                    if (!ImGuizmo::IsUsing())
+                        gizmoType = ImGuizmo::OPERATION::TRANSLATE;
+                }
+
+                if (ImGui::SelectableButton(Icon_Rotate, buttonSize, gizmoType == ImGuizmo::OPERATION::ROTATE))
+                {
+                    if (!ImGuizmo::IsUsing())
+                        gizmoType = ImGuizmo::OPERATION::ROTATE;
+                }
+
+                if (ImGui::SelectableButton(Icon_Scale, buttonSize, gizmoType == ImGuizmo::OPERATION::SCALE))
+                {
+                    if (!ImGuizmo::IsUsing())
+                        gizmoType = ImGuizmo::OPERATION::SCALE;
+                }
+
+                if (ImGui::SelectableButton(Icon_Transform, buttonSize, gizmoType == ImGuizmo::OPERATION::UNIVERSAL))
+                {
+                    if (!ImGuizmo::IsUsing())
+                        gizmoType = ImGuizmo::OPERATION::UNIVERSAL;
+                }
             }
 
-            if (ImGui::SelectableButton(Icon_Move, buttonSize, gizmoType == ImGuizmo::OPERATION::TRANSLATE))
-            {
-                if (!ImGuizmo::IsUsing())
-                    gizmoType = ImGuizmo::OPERATION::TRANSLATE;
-            }
+            Editor::EndChildView();
+        }
 
-            if (ImGui::SelectableButton(Icon_Rotate, buttonSize, gizmoType == ImGuizmo::OPERATION::ROTATE))
-            {
-                if (!ImGuizmo::IsUsing())
-                    gizmoType = ImGuizmo::OPERATION::ROTATE;
-            }
+        // Right Toolbar
+        
+        {
+            Editor::BeginChildView("DebugBar", axisGizmoCorner);
 
-            if (ImGui::SelectableButton(Icon_Scale, buttonSize, gizmoType == ImGuizmo::OPERATION::SCALE))
+            ImGui::ScopedStyle sswp(ImGuiStyleVar_WindowPadding, ImVec2(3.0f, 3.0f));
+            
             {
-                if (!ImGuizmo::IsUsing())
-                    gizmoType = ImGuizmo::OPERATION::SCALE;
-            }
+                ImVec2 buttonSize = ImVec2(18, 18) * io.FontGlobalScale + style.FramePadding * 2;
 
-            if (ImGui::SelectableButton(Icon_Transform, buttonSize, gizmoType == ImGuizmo::OPERATION::UNIVERSAL))
-            {
-                if (!ImGuizmo::IsUsing())
-                    gizmoType = ImGuizmo::OPERATION::UNIVERSAL;
+                ImGui::BeginChild("TBN", { 0, 0 }, ImGuiChildFlags_AutoResizeX | ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_Borders);
+                
+                {
+                    ImGui::ScopedFont sf(Editor::FontType::Blod, Editor::FontSize::Caption);
+                    ImGui::ScopedStyle ss(ImGuiStyleVar_ButtonTextAlign, ImVec2(0.6f, 0.6f));
+                    if (ImGui::SelectableButton(Icon_Mesh, buttonSize, openMeshDebuggingOverlay))
+                    {
+                        openMeshDebuggingOverlay = true;
+                        ImGui::OpenPopup("Mesh Debugging Overlay");
+                    }
+                }
+
+                {
+                    ImGui::ScopedStyle ss(ImGuiStyleVar_WindowPadding, ImVec2(8, 8));
+                    ImGui::SetNextWindowSize({ 300 * io.FontGlobalScale, 0 });
+                    if (ImGui::BeginPopup("Mesh Debugging Overlay"))
+                    {
+                        ImVec2 buttonSize = ImVec2(60, 16) * io.FontGlobalScale + style.FramePadding * 2;
+
+                        {
+                            ImGui::ScopedFont sf(Editor::FontType::Blod);
+                            ImGui::TextUnformatted("Mesh Debugging Overlay");
+                        }
+                        ImGui::Dummy({ -1, 4 });
+
+                        ImGui::ShiftCursorX((ImGui::GetContentRegionAvail().x - (buttonSize.x + 1) * 4) / 2);
+
+
+                        if (ImGui::SelectableButton("Tangent", buttonSize, debug.enableMeshTangents))
+                            debug.enableMeshTangents = debug.enableMeshTangents ? false : true;
+
+                        ImGui::SameLine(0, 1);
+
+                        if (ImGui::SelectableButton("Bitangent", buttonSize, debug.enableMeshBitangents))
+                            debug.enableMeshBitangents = debug.enableMeshBitangents ? false : true;
+
+                        ImGui::SameLine(0, 1);
+
+                        if (ImGui::SelectableButton("Normal", buttonSize, debug.enableMeshNormals))
+                            debug.enableMeshNormals = debug.enableMeshNormals ? false : true;
+
+                        ImGui::SameLine(0, 1);
+
+                        if (ImGui::SelectableButton("AABB", buttonSize, debug.enableMeshAABB))
+                            debug.enableMeshAABB = debug.enableMeshAABB ? false : true;
+
+                        ImGui::Dummy({ -1, 4 });
+
+                        if (ImGui::BeginTable("Props", 2, ImGuiTableFlags_SizingFixedFit))
+                        {
+                            ImGui::ScopedCompact sc;
+
+                            ImField::Checkbox("Stats", &debug.enableStats);
+                            ImField::DragFloat("Line Length", &debug.lineLength, 0.001f, 0.01f, 1.0f);
+                            ImField::DragFloat("Color Opacity", &debug.colorOpacity, 0.001f, 0.1f, 1.0f);
+
+                            ImGui::EndTable();
+                        }
+
+                        ImGui::EndPopup();
+                    }
+                    else
+                    {
+                        openMeshDebuggingOverlay = false;
+                    }
+                }
+
+                ImGui::EndChild();
             }
 
             Editor::EndChildView();
@@ -348,7 +637,7 @@ void Editor::ViewPortWindow::OnUpdate(HE::Timestep ts)
 
         // Axis Gizmo
         {
-            Editor::BeginChildView("Axis Gizmo", axisGizmoCorner);
+            Editor::BeginChildView("Axis Gizmo", axisGizmoCorner, { 0, 32 });
 
             float size = 120 * scale;
             auto viewMatrix = Math::value_ptr(editorCamera->view.view);
@@ -377,10 +666,20 @@ void Editor::ViewPortWindow::OnUpdate(HE::Timestep ts)
             Editor::BeginChildView("Stats", statsCorner);
 
             const auto& appStats = HE::Application::GetStats();
-            if (ctx.sceneMode == SceneMode::Editor)
-                ImGui::Text("CPUMain %.2f ms | FPS %i | Sampels %i | Time %.2f s", appStats.CPUMainTime, appStats.FPS, fd.frameIndex, fd.time);
-            else
-                ImGui::Text("CPUMain %.2f ms | FPS %i | Time %.2f s | Frame %i / %i | Sample %i / %i", appStats.CPUMainTime, appStats.FPS, fd.time, ctx.frameIndex, ctx.frameEnd, ctx.sampleCount, ctx.maxSamples);
+            if (debug.enableStats && tiny2DView)
+            {
+                auto& stats = Tiny2D::GetStats(tiny2DView);
+
+                ImGui::Text("width/height %i / %i", compositeTarget->getDesc().width, compositeTarget->getDesc().height);
+                ImGui::Text("lines %i | quads %i | boxes %i", stats.LineCount, stats.quadCount, stats.boxCount);
+            }
+
+            if (appStats.FPS < 30) ImGui::PushStyleColor(ImGuiCol_Text, GetColor(Color::Dangerous));
+            ImGui::Text("CPUMain %.2f ms | FPS %i", appStats.CPUMainTime, appStats.FPS);
+            if (appStats.FPS < 30) ImGui::PopStyleColor();
+
+            ImGui::SameLine(0,2);
+            ImGui::Text("| Sampels %i | Time %.2f s", fd.frameIndex, fd.time);
 
             Editor::EndChildView();
         }
@@ -534,6 +833,19 @@ void Editor::ViewPortWindow::AlignActiveCameraToView(Assets::Scene* scene)
     }
 }
 
+void Editor::ViewPortWindow::SetRendererToEditorCameraProp(HRay::FrameData& frameData)
+{
+    frameData.sceneInfo.view.minDistance = editorCamera->view.near;
+    frameData.sceneInfo.view.maxDistance = editorCamera->view.far;
+    frameData.sceneInfo.view.fov = editorCamera->view.fov;
+
+    frameData.sceneInfo.view.enableDepthOfField = false;
+    frameData.sceneInfo.view.enableVisualFocusDistance = false;
+    frameData.sceneInfo.view.apertureRadius = 0;
+    frameData.sceneInfo.view.focusFalloff = 0;
+    frameData.sceneInfo.view.focusDistance = 10;
+}
+
 void Editor::ViewPortWindow::Serialize(std::ostringstream& out)
 {
     out << "\t\t\"gizmoType\" : " << gizmoType << ",\n";
@@ -556,6 +868,18 @@ void Editor::ViewPortWindow::Serialize(std::ostringstream& out)
             out << "\t\t\t\t\"speed\" : " << flyCamera->speed << "\n";
         }
         out << "\t\t\t}\n";
+    }
+    out << "\t\t},\n";
+
+    out << "\t\t\"debug\" : {\n";
+    {
+        out << "\t\t\t\"enableMeshBitangents\" : " << (debug.enableMeshBitangents ? "true" : "false") << ",\n";
+        out << "\t\t\t\"enableMeshTangents\" : " << (debug.enableMeshTangents ? "true" : "false") << ",\n";
+        out << "\t\t\t\"enableMeshNormals\" : " << (debug.enableMeshNormals ? "true" : "false") << ",\n";
+        out << "\t\t\t\"enableMeshAABB\" : " << (debug.enableMeshAABB ? "true" : "false") << ",\n";
+        out << "\t\t\t\"enableStats\" : " << (debug.enableStats ? "true" : "false") << ",\n";
+        out << "\t\t\t\"lineLength\" : " << debug.lineLength << ",\n";
+        out << "\t\t\t\"colorOpacity\" : " << debug.colorOpacity << "\n";
     }
     out << "\t\t},\n";
 
@@ -659,6 +983,31 @@ void Editor::ViewPortWindow::Deserialize(simdjson::dom::element element)
             statsCorner = magic_enum::enum_cast<Corner>(str).value();
         }
     }
+
+    auto debugElement = element["debug"];
+    if (!debugElement.error())
+    {
+        if (!debugElement["enableMeshBitangents"].error())
+            debug.enableMeshBitangents = debugElement["enableMeshBitangents"].get_bool().value();
+
+        if (!debugElement["enableMeshTangents"].error())
+            debug.enableMeshTangents = debugElement["enableMeshTangents"].get_bool().value();
+
+        if (!debugElement["enableMeshNormals"].error())
+            debug.enableMeshNormals = debugElement["enableMeshNormals"].get_bool().value();
+
+        if (!debugElement["enableMeshAABB"].error())
+            debug.enableMeshAABB = debugElement["enableMeshAABB"].get_bool().value();
+
+        if (!debugElement["enableStats"].error())
+            debug.enableStats = debugElement["enableStats"].get_bool().value();
+
+        if (!debugElement["lineLength"].error())
+            debug.lineLength = (float)debugElement["lineLength"].get_double().value();
+
+        if (!debugElement["colorOpacity"].error())
+            debug.colorOpacity = (float)debugElement["colorOpacity"].get_double().value();
+    }
 }
 
 
@@ -686,11 +1035,12 @@ void Editor::OutputWindow::OnUpdate(HE::Timestep ts)
         auto viewportMaxRegion = ImGui::GetCursorScreenPos() + ImGui::GetContentRegionAvail();
         auto viewportOffset = ImGui::GetWindowPos();
 
-        if (ctx.fd.renderTarget)
+        auto rt = HRay::GetColorTarget(ctx.fd);
+        if (rt)
         {
             ImVec2 availableSize = { (float)w, (float)h };
-            float imageWidth = (float)ctx.fd.renderTarget->getDesc().width;
-            float imageHeight = (float)ctx.fd.renderTarget->getDesc().height;
+            float imageWidth = (float)rt->getDesc().width;
+            float imageHeight = (float)rt->getDesc().height;
             float imageAspect = imageWidth / imageHeight;
 
             ImVec2 drawSize = availableSize;
@@ -704,7 +1054,7 @@ void Editor::OutputWindow::OnUpdate(HE::Timestep ts)
             ImVec2 offset = (availableSize - drawSize) * 0.5f;
             ImGui::SetCursorPos(cursorPos + offset);
 
-            ImGui::Image(ctx.fd.renderTarget.Get(), drawSize);
+            ImGui::Image(rt, drawSize);
         }
 
         // Stats
@@ -1439,11 +1789,24 @@ void Editor::RendererSettingsWindow::OnUpdate(HE::Timestep ts)
         {
             ImField::Checkbox("VSync", &HE::Application::GetWindow().swapChain->desc.vsync);
     
-            // TODO
-            //if (ImField::DragInt("Max Lighte Bounces", &ctx.rd.sceneInfo.settings.maxLighteBounces)) Editor::Clear();
-            //if (ImField::DragInt("Max Samples", &ctx.rd.sceneInfo.settings.maxSamples)) Editor::Clear();
-            //if (ImField::DragFloat("Gamma", &ctx.rd.sceneInfo.settings.gamma)) Editor::Clear();
-    
+            if (ImField::DragInt("Max Lighte Bounces", &ctx.fd.sceneInfo.settings.maxLighteBounces)) Editor::Clear();
+            if (ImField::DragInt("Max Samples", &ctx.fd.sceneInfo.settings.maxSamples)) Editor::Clear();
+            if (ImField::DragFloat("Exposure", &ctx.rd.postProssingInfo.exposure)) Editor::Clear();
+            if (ImField::DragFloat("Gamma", &ctx.rd.postProssingInfo.gamma)) Editor::Clear();
+
+            {
+                int selected = 0;
+                auto currentTypeStr = magic_enum::enum_name<HRay::TonMapingType>(ctx.rd.postProssingInfo.tonMappingType);
+                auto types = magic_enum::enum_names<HRay::TonMapingType>();
+                if (ImField::Combo("TonMapingType", types, currentTypeStr, selected))
+                {
+                    ctx.rd.postProssingInfo.tonMappingType = magic_enum::enum_cast<HRay::TonMapingType>(types[selected]).value();
+                    auto s = magic_enum::enum_name<HRay::TonMapingType>(ctx.rd.postProssingInfo.tonMappingType);
+                  
+                    Editor::Clear();
+                }
+            }
+
             ImGui::EndTable();
         }
     }

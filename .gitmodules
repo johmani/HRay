@@ -4,3 +4,6 @@
 [submodule "Plugins/Assets"]
 	path = Plugins/Assets
 	url = https://github.com/johmani/Assets.git
+[submodule "Plugins/Tiny2D"]
+	path = Plugins/Tiny2D
+	url = https://github.com/johmani/Tiny2D.git

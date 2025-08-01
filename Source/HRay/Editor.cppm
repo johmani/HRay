@@ -12,6 +12,7 @@ import Assets;
 import HRay;
 import nvrhi;
 import simdjson;
+import Tiny2D;
 
 export namespace Editor {
 
@@ -362,7 +363,6 @@ export namespace Editor {
     Assets::Entity GetSceneCamera(Assets::Scene* scene);
    
     void SetRendererToSceneCameraProp(HRay::FrameData& frameData, const Assets::CameraComponent& c);
-    void SetRendererToEditorCameraProp(HRay::FrameData& frameData);
 
     void Animate();
     void Stop();
@@ -506,6 +506,19 @@ export namespace Editor {
 
     struct ViewPortWindow : Window, SerializationCallback
     {
+        struct Debug
+        {
+            bool enableMeshBitangents = false;
+            bool enableMeshTangents = false;
+            bool enableMeshNormals = false;
+            bool enableMeshAABB = false;
+            bool enableStats = false;
+            float lineLength = 0.05f;
+            float colorOpacity = 1.0f;
+        } debug;
+
+        bool openMeshDebuggingOverlay = false;
+        
         HE::Ref<OrbitCamera> orbitCamera;
         HE::Ref<FlyCamera> flyCamera;
         HE::Ref<EditorCamera> editorCamera;
@@ -526,6 +539,13 @@ export namespace Editor {
         Corner statsCorner = Corner::ButtomLeft; 
 
         HRay::FrameData fd;
+        Tiny2D::ViewHandle tiny2DView;
+
+        nvrhi::BindingLayoutHandle compositeBindingLayout;
+        nvrhi::BindingSetHandle compositeBindingSet;
+        nvrhi::ComputePipelineHandle computePipeline;
+        nvrhi::ShaderHandle cs;
+        nvrhi::TextureHandle compositeTarget;
 
         void OnCreate() override;
         void OnUpdate(HE::Timestep ts) override;
@@ -535,6 +555,7 @@ export namespace Editor {
         void UpdateEditorCameraAnimation(Assets::Scene* scene, Assets::Entity mainCameraEntity, float ts);
         void Preview();
         void StopPreview(bool moveBack = true);
+        void SetRendererToEditorCameraProp(HRay::FrameData& frameData);
 
         void SetFlyCamera();
         void SetOrbitCamera();

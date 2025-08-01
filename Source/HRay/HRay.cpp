@@ -31,6 +31,20 @@ struct MeshSourceDescriptors
     Assets::DescriptorHandle vertexBufferDescriptor;
 };
 
+struct HitInfo
+{
+    Math::float3 normal;
+    Math::float3 ffnormal;
+    Math::float3 tangent;
+    Math::float3 bitangent;
+    float distance;
+
+    Math::float3 baseColor;
+    Math::float3 emissive;
+    float metallic;
+    float roughness;
+};
+
 static void GetCameraBasis(const Math::float4x4& clipToWorld, Math::float3& camFront, Math::float3& camUp, Math::float3& camRight)
 {
     Math::float4 originCS = Math::float4(0, 0, 0, 1);
@@ -72,19 +86,29 @@ static void CreateOrResizeRenderTarget(HRay::RendererData& data, HRay::FrameData
 {
     HE_PROFILE_FUNCTION();
 
+    nvrhi::TextureDesc desc;
+    desc.width = width;
+    desc.height = height;
+    desc.initialState = nvrhi::ResourceStates::UnorderedAccess;
+    desc.format = nvrhi::Format::RGBA32_FLOAT;
+    desc.keepInitialState = true;
+    desc.isRenderTarget = false;
+    desc.isUAV = true;
 
-    nvrhi::TextureDesc textureDesc;
-    textureDesc.width = width;
-    textureDesc.height = height;
-    textureDesc.initialState = nvrhi::ResourceStates::UnorderedAccess;
-    textureDesc.format = nvrhi::Format::RGBA16_UNORM;
-    textureDesc.keepInitialState = true;
-    textureDesc.isRenderTarget = false;
-    textureDesc.isUAV = true;
-    frameData.renderTarget = data.device->createTexture(textureDesc);
-    frameData.prevRenderTarget = data.device->createTexture(textureDesc);
+    desc.debugName = "HDRColor";
+    frameData.HDRColor = data.device->createTexture(desc);
 
-    //frameData.renderTarget.Reset();
+    desc.debugName = "accumulationOutput";
+    frameData.accumulationOutput = data.device->createTexture(desc);
+
+    desc.format = nvrhi::Format::RGBA16_UNORM;
+    desc.debugName = "LDRColor";
+    frameData.LDRColor = data.device->createTexture(desc);
+
+    desc.format = nvrhi::Format::D32;
+    desc.debugName = "Depth";
+    frameData.depth = data.device->createTexture(desc);
+
     frameData.bindingSet.Reset();
 }
 
@@ -199,12 +223,22 @@ void HRay::Init(RendererData& data, nvrhi::DeviceHandle pDevice, nvrhi::CommandL
         data.descriptorTable = HE::CreateRef<Assets::DescriptorTableManager>(data.device, data.bindlessLayout);
     }
 
+    {
+        HE_PROFILE_SCOPE("Create PostProssingInfo Buffer");
+
+        data.postProssingInfoBuffer = data.device->createBuffer(nvrhi::utils::CreateVolatileConstantBufferDesc(sizeof(PostProssingInfo), "postProssingInfoBuffer", sizeof(PostProssingInfo)));
+        HE_VERIFY(data.postProssingInfoBuffer);
+    }
+
+
     // Shaders
     {
-        HE_PROFILE_SCOPE("CreateShaderLibrary");
+        {
+            HE_PROFILE_SCOPE("CreateShaderLibrary");
 
-        data.shaderLibrary = HE::RHI::CreateShaderLibrary(data.device, STATIC_SHADER(Main), nullptr);
-        HE_VERIFY(data.shaderLibrary);
+            data.shaderLibrary = HE::RHI::CreateShaderLibrary(data.device, STATIC_SHADER(Main), nullptr);
+            HE_VERIFY(data.shaderLibrary);
+        }
 
         nvrhi::ShaderDesc desc;
         desc.shaderType = nvrhi::ShaderType::Compute;
@@ -240,8 +274,11 @@ void HRay::Init(RendererData& data, nvrhi::DeviceHandle pDevice, nvrhi::CommandL
            nvrhi::BindingLayoutItem::StructuredBuffer_SRV(4),
            nvrhi::BindingLayoutItem::Texture_UAV(0),
            nvrhi::BindingLayoutItem::Texture_UAV(1),
+           nvrhi::BindingLayoutItem::Texture_UAV(2),
+           nvrhi::BindingLayoutItem::Texture_UAV(3),
            nvrhi::BindingLayoutItem::Sampler(0),
-           nvrhi::BindingLayoutItem::VolatileConstantBuffer(0)
+           nvrhi::BindingLayoutItem::VolatileConstantBuffer(0),
+           nvrhi::BindingLayoutItem::VolatileConstantBuffer(1)
         };
 
         data.bindingLayout = data.device->createBindingLayout(desc);
@@ -256,7 +293,8 @@ void HRay::Init(RendererData& data, nvrhi::DeviceHandle pDevice, nvrhi::CommandL
         desc.visibility = nvrhi::ShaderType::All;
         desc.bindings = {
            nvrhi::BindingLayoutItem::Texture_UAV(0),
-           //nvrhi::BindingLayoutItem::PushConstants(0, sizeof(uint32_t))
+           nvrhi::BindingLayoutItem::Texture_UAV(1),
+           nvrhi::BindingLayoutItem::VolatileConstantBuffer(0)
         };
 
         data.postProcessingBindingLayout = data.device->createBindingLayout(desc);
@@ -283,7 +321,7 @@ void HRay::Init(RendererData& data, nvrhi::DeviceHandle pDevice, nvrhi::CommandL
             false
         } };
 
-        pipelineDesc.maxPayloadSize = sizeof(Math::float4) + sizeof(Math::float3) * 2 + sizeof(float) * 3;
+        pipelineDesc.maxPayloadSize = sizeof(HitInfo);
         data.pipeline = data.device->createRayTracingPipeline(pipelineDesc);
         HE_VERIFY(data.pipeline);
 
@@ -304,7 +342,7 @@ void HRay::BeginScene(RendererData& data, FrameData& frameData)
 {
     HE_PROFILE_FUNCTION();
 
-    if (!frameData.renderTarget)
+    if (!frameData.HDRColor)
         CreateOrResizeRenderTarget(data, frameData, 1920, 1080);
 
     if (!frameData.geometryBuffer)
@@ -382,7 +420,9 @@ void HRay::EndScene(RendererData& data, FrameData& frameData, nvrhi::ICommandLis
         commandList->writeBuffer(frameData.sceneInfoBuffer, &frameData.sceneInfo, sizeof(SceneInfo));
     }
 
-    if ((viewDesc.width > 0 && viewDesc.height > 0) && (viewDesc.width != frameData.renderTarget->getDesc().width || viewDesc.height != frameData.renderTarget->getDesc().height))
+    commandList->writeBuffer(data.postProssingInfoBuffer, &data.postProssingInfo, sizeof(PostProssingInfo));
+
+    if ((viewDesc.width > 0 && viewDesc.height > 0) && (viewDesc.width != frameData.HDRColor->getDesc().width || viewDesc.height != frameData.HDRColor->getDesc().height))
         CreateOrResizeRenderTarget(data, frameData, viewDesc.width, viewDesc.height);
 
     if (!frameData.bindingSet)
@@ -395,8 +435,9 @@ void HRay::EndScene(RendererData& data, FrameData& frameData, nvrhi::ICommandLis
             HE_ASSERT(frameData.geometryBuffer);
             HE_ASSERT(frameData.materialBuffer);
             HE_ASSERT(frameData.directionalLightBuffer);
-            HE_ASSERT(frameData.renderTarget);
-            HE_ASSERT(frameData.prevRenderTarget);
+            HE_ASSERT(frameData.HDRColor);
+            HE_ASSERT(frameData.accumulationOutput);
+            HE_ASSERT(frameData.LDRColor);
             HE_ASSERT(frameData.sceneInfoBuffer);
 
             nvrhi::BindingSetDesc bindingSetDesc;
@@ -406,20 +447,26 @@ void HRay::EndScene(RendererData& data, FrameData& frameData, nvrhi::ICommandLis
                 nvrhi::BindingSetItem::StructuredBuffer_SRV(2, frameData.geometryBuffer),
                 nvrhi::BindingSetItem::StructuredBuffer_SRV(3, frameData.materialBuffer),
                 nvrhi::BindingSetItem::StructuredBuffer_SRV(4, frameData.directionalLightBuffer),
-                nvrhi::BindingSetItem::Texture_UAV(0, frameData.renderTarget),
-                nvrhi::BindingSetItem::Texture_UAV(1, frameData.prevRenderTarget),
+                nvrhi::BindingSetItem::Texture_UAV(0, frameData.HDRColor),
+                nvrhi::BindingSetItem::Texture_UAV(1, frameData.accumulationOutput),
+                nvrhi::BindingSetItem::Texture_UAV(2, frameData.LDRColor),
+                nvrhi::BindingSetItem::Texture_UAV(3, frameData.depth),
                 nvrhi::BindingSetItem::Sampler(0, data.anisotropicWrapSampler),
-                nvrhi::BindingSetItem::ConstantBuffer(0, frameData.sceneInfoBuffer)
+                nvrhi::BindingSetItem::ConstantBuffer(0, frameData.sceneInfoBuffer),
+                nvrhi::BindingSetItem::ConstantBuffer(1, data.postProssingInfoBuffer)
             };
 
             frameData.bindingSet = data.device->createBindingSet(bindingSetDesc, data.bindingLayout);
         }
 
         {
+            HE_ASSERT(data.postProssingInfoBuffer);
+
             nvrhi::BindingSetDesc bindingSetDesc;
             bindingSetDesc.bindings = {
-                nvrhi::BindingSetItem::Texture_UAV(0, frameData.renderTarget),
-                //nvrhi::BindingSetItem::PushConstants(0, sizeof(uint32_t))
+                nvrhi::BindingSetItem::Texture_UAV(0, frameData.HDRColor),
+                nvrhi::BindingSetItem::Texture_UAV(1, frameData.LDRColor),
+                nvrhi::BindingSetItem::ConstantBuffer(0, data.postProssingInfoBuffer)
             };
 
             data.postProcessingBindingSet = data.device->createBindingSet(bindingSetDesc, data.postProcessingBindingLayout);
@@ -437,7 +484,7 @@ void HRay::EndScene(RendererData& data, FrameData& frameData, nvrhi::ICommandLis
     state.bindings = { frameData.bindingSet, data.descriptorTable->GetDescriptorTable() };
     commandList->setRayTracingState(state);
 
-    commandList->copyTexture(frameData.prevRenderTarget, {}, frameData.renderTarget, {});
+    commandList->copyTexture(frameData.accumulationOutput, {}, frameData.HDRColor, {});
 
     nvrhi::rt::DispatchRaysArguments args;
     args.width = viewDesc.width;
@@ -626,19 +673,14 @@ void HRay::SubmitMesh(RendererData& data, FrameData& frameData, Assets::Asset as
             gd.texCoord1Offset = meshSource->HasAttribute(Assets::VertexAttribute::TexCoord1) ? (uint32_t)geometry.GetVertexRange(Assets::VertexAttribute::TexCoord1).byteOffset : c_Invalid;
 
             // materials
+            if (frameData.materials.contains(geometry.materailHandle))
             {
-                Assets::Material* material = data.am->GetAsset<Assets::Material>(geometry.materailHandle);
-                HE_ASSERT(material);
-
-                if (frameData.materials.contains(geometry.materailHandle))
-                {
-                    uint32_t index = frameData.materials.at(geometry.materailHandle);
-                    gd.materialIndex = index;
-                }
-                else
-                {
-                    gd.materialIndex = c_DefaultMaterialIndex;
-                }
+                uint32_t index = frameData.materials.at(geometry.materailHandle);
+                gd.materialIndex = index;
+            }
+            else
+            {
+                gd.materialIndex = c_DefaultMaterialIndex;
             }
 
             frameData.geometryCount++;
@@ -696,11 +738,13 @@ void HRay::SubmitMaterial(RendererData& data, FrameData& frameData, Assets::Asse
 
     uint32_t index = frameData.materials.at(handle);
     auto& mat = frameData.materialData[index];
-    mat.baseColor = material.baseColor;
-    mat.metallic = material.metallic;
-    mat.roughness = material.roughness;
+
+    mat.baseColor           = Math::convertSRGBToLinear(material.baseColor);
+    mat.metallic            = material.metallic;
+    mat.roughness           = material.roughness;
+    mat.emissiveColor       = Math::convertSRGBToLinear(material.emissiveColor) * (material.emissiveEV);
+    
     mat.uvSet = (int)material.uvSet;
-    mat.emissiveColor = Math::convertSRGBToLinear(material.emissiveColor) * material.emissiveEV;
     mat.baseTextureIndex = baseTexture ? baseTexture->descriptor.Get() : c_Invalid;
     mat.emissiveTextureIndex = emissiveTexture ? emissiveTexture->descriptor.Get() : c_Invalid;
     mat.metallicRoughnessTextureIndex = metallicRoughnessTexture ? metallicRoughnessTexture->descriptor.Get() : c_Invalid;
@@ -714,7 +758,7 @@ void HRay::SubmitDirectionalLight(RendererData& data, FrameData& frameData, cons
         CreateOrResizeDirectionalLightBuffer(data, frameData, (uint32_t)frameData.directionalLightData.size() * 2);
 
     HRay::DirectionalLightData& l = frameData.directionalLightData[frameData.sceneInfo.light.directionalLightCount];
-    l.color = light.color;
+    l.color = Math::convertSRGBToLinear(light.color);
     l.intensity = light.intensity;
     l.angularRadius = light.angularRadius;
     l.haloSize = light.haloSize;
@@ -726,15 +770,25 @@ void HRay::SubmitDirectionalLight(RendererData& data, FrameData& frameData, cons
 
 void HRay::SubmitSkyLight(RendererData& data, FrameData& frameData, const Assets::DynamicSkyLightComponent& light)
 {
-    frameData.sceneInfo.light.groundColor = Math::float4(light.groundColor,1);
-    frameData.sceneInfo.light.horizonSkyColor = Math::float4(light.horizonSkyColor, 1);
-    frameData.sceneInfo.light.zenithSkyColor = Math::float4(light.zenithSkyColor, 1);
+    frameData.sceneInfo.light.groundColor = Math::float4(Math::convertSRGBToLinear(light.groundColor), 1);
+    frameData.sceneInfo.light.horizonSkyColor = Math::float4(Math::convertSRGBToLinear(light.horizonSkyColor), 1);
+    frameData.sceneInfo.light.zenithSkyColor = Math::float4(Math::convertSRGBToLinear(light.zenithSkyColor), 1);
 }
 
 void HRay::Clear(FrameData& frameData)
 {
     frameData.frameIndex = 0;
     frameData.lastTime = HE::Application::GetTime();
+}
+
+nvrhi::ITexture* HRay::GetColorTarget(FrameData& frameData)
+{
+    return frameData.LDRColor;
+}
+
+nvrhi::ITexture* HRay::GetDepthTarget(FrameData& frameData)
+{
+    return frameData.depth;
 }
 
 void HRay::ReleaseTexture(RendererData& data,  Assets::Texture* texture)

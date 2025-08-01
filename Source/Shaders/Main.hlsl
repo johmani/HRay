@@ -113,6 +113,13 @@ struct DirectionalLightData
     float haloFalloff;
 };
 
+struct PostProssingInfo
+{
+    float exposure;
+    float gamma;
+    int tonMappingType;
+};
+
 VK_BINDING(0, 1) ByteAddressBuffer bindlessBuffers[] : register(t0, space1);
 VK_BINDING(1, 1) Texture2D bindlessTextures[] : register(t0, space2);
 
@@ -123,28 +130,21 @@ StructuredBuffer<Material> materialData : register(t3);
 StructuredBuffer<DirectionalLightData> directionalLightData : register(t4);
 
 ConstantBuffer<SceneInfo> sceneInfoBuffer : register(b0);
+ConstantBuffer<PostProssingInfo> postProssingInfo : register(b1);
 
 SamplerState materialSampler : register(s0);
-RWTexture2D<float4> renderTarget : register(u0);
-RWTexture2D<float4> prevRenderTarget : register(u1);
+
+RWTexture2D<float4> HDRColor : register(u0);
+RWTexture2D<float4> accumulationOutput : register(u1);
+RWTexture2D<float4> LDRColor : register(u2);
+RWTexture2D<float> depth : register(u3);
 
 typedef BuiltInTriangleIntersectionAttributes HitAttributes;
-
-struct HitInfo
-{
-    float4 color;
-    float3 emissiveColor;
-    float3 normal;
-    float distance;
-    float metallic;
-    float roughness;
-
-    bool HasHit() { return distance < 1000;}
-};
 
 struct GeometrySample
 {
     Material material;
+    int materialID;
 
     float3 objectSpacePosition;
     float4 tangent;
@@ -165,6 +165,7 @@ GeometrySample SampleGeometry(
     InstanceData instance = instanceData[instanceIndex];
     GeometryData geometry = geometryData[instance.firstGeometryIndex + geometryIndex];
     gs.material = materialData[geometry.materialIndex];
+    gs.materialID = geometry.materialIndex;
 
     ByteAddressBuffer indexBuffer = bindlessBuffers[NonUniformResourceIndex(geometry.indexBufferIndex)];
     ByteAddressBuffer vertexBuffer = bindlessBuffers[NonUniformResourceIndex(geometry.vertexBufferIndex)];
@@ -246,25 +247,26 @@ RayDesc CreatePrimaryRay(float2 uv, float4x4 clipToWorld, float3 cameraPosition)
 
 float3 EvaluateEnvironmentLight(float3 rayOrigin, float3 rayDirection)
 {
-    if (!sceneInfoBuffer.light.enableEnvironmentLight)
-        return 0;
-
-    float3 skyColourHorizon = SRGBToLinear(sceneInfoBuffer.light.skyColourHorizon.rgb);
-    float3 skyColourZenith = SRGBToLinear(sceneInfoBuffer.light.skyColourZenith.rgb);
-    float3 groundColour = SRGBToLinear(sceneInfoBuffer.light.groundColour.rgb);
-
-    float skyT = pow(smoothstep(0.0, 0.4, rayDirection.y), 0.35);
-    float groundToSkyT = smoothstep(-0.01, 0.0, rayDirection.y);
-    float3 skyGradient = lerp(skyColourHorizon, skyColourZenith, skyT);
-    float3 skyColor = lerp(groundColour, skyGradient, groundToSkyT);
-
     float3 totalSunColor = 0;
+    float groundToSkyT = 1;
+
+    if (sceneInfoBuffer.light.enableEnvironmentLight)
+    {
+        float3 skyColourHorizon = sceneInfoBuffer.light.skyColourHorizon.rgb;
+        float3 skyColourZenith = sceneInfoBuffer.light.skyColourZenith.rgb;
+        float3 groundColour = sceneInfoBuffer.light.groundColour.rgb;
+
+        float skyT = pow(smoothstep(0.0, 0.4, rayDirection.y), 0.35);
+        groundToSkyT = smoothstep(-0.01, 0.0, rayDirection.y);
+        float3 skyGradient = lerp(skyColourHorizon, skyColourZenith, skyT);
+        totalSunColor += lerp(groundColour, skyGradient, groundToSkyT);
+    }
 
     for (int i = 0; i < sceneInfoBuffer.light.directionalLightCount; i++)
     {
         DirectionalLightData light = directionalLightData[i];
 
-        float3 lightColorLinear = SRGBToLinear(light.color);
+        float3 lightColorLinear = light.color;
         float cosTheta = dot(normalize(rayDirection), -light.direction);
         float softness = 0.05;
         float sunDisk = smoothstep(cos(light.angularRadius + softness), cos(light.angularRadius), cosTheta);
@@ -280,7 +282,21 @@ float3 EvaluateEnvironmentLight(float3 rayOrigin, float3 rayDirection)
         totalSunColor += sunContribution;
     }
 
-    return skyColor + totalSunColor;
+    return totalSunColor;
+}
+
+float ComputeDepth(
+    float3 cameraOrigin,
+    float3 cameraForward,
+    float3 hitPosition,
+    float nearPlane,
+    float farPlane
+)
+{
+    float3 camToHit = hitPosition - cameraOrigin;
+    float zEye = -length(camToHit) * dot(cameraForward, normalize(camToHit));
+    float depthNDC = ((farPlane + nearPlane) + (2.0 * farPlane * nearPlane) / zEye) / (farPlane - nearPlane);
+    return (depthNDC + 1.0f) * 0.5f;
 }
 
 [shader("raygeneration")]
@@ -310,6 +326,7 @@ void RayGen()
     focusPoint    = sceneInfoBuffer.view.focalCenter + offset;
 
     float3 finalColor = 0;
+    float depthValue = 1000;
 
     for (uint i = 0; i < sceneInfoBuffer.settings.maxSamples; i++)
     {
@@ -324,9 +341,9 @@ void RayGen()
         float2 targetOffset = RandomPointInCircle(rngState) * sceneInfoBuffer.view.apertureRadius;
         rayDirection = normalize((focusPoint + right * targetOffset.x + up * targetOffset.y) - rayOrigin);
 
-        float3 resultColor = float3(0, 0, 0);
+        float3 radiance = float3(0, 0, 0);
         float3 throughput  = float3(1, 1, 1);
-    
+
         for (uint bounce = 0; bounce < sceneInfoBuffer.settings.maxLighteBounces; bounce++)
         {
             RayDesc ray;
@@ -336,45 +353,76 @@ void RayGen()
             ray.TMax      = far;
         
             HitInfo payload;
-            //RAY_FLAG flags = RAY_FLAG_NONE;
-            RAY_FLAG flags = RAY_FLAG_CULL_BACK_FACING_TRIANGLES;
+            RAY_FLAG flags = RAY_FLAG_NONE;//RAY_FLAG_CULL_BACK_FACING_TRIANGLES; // RAY_FLAG_NONE
             TraceRay(TLAS, flags, 0xFF, 0, 0, 0, ray, payload);
             float3 hitPoint = rayOrigin + rayDirection * payload.distance;
         
+            if (bounce == 0)
+            {
+                depthValue = ComputeDepth(rayOrigin, sceneInfoBuffer.view.front, hitPoint, near, far);
+            }
+
             if (sceneInfoBuffer.view.enableVisualFocusDistance && bounce == 0 && length(hitPoint - focusPoint) <= 0.2)
-                resultColor = lerp(resultColor, float3(0, 1, 0), 0.1);
+                radiance = lerp(radiance, float3(0, 1, 0), 0.1);
 
             if (payload.HasHit())
             {
-                rayOrigin = hitPoint + payload.normal * c_RayPosNormalOffset;
+                radiance += payload.emissive * throughput;
+                throughput *= payload.baseColor.rgb;
+
                 float3 diffuse = normalize(payload.normal + RandomDirection(rngState));
                 float3 specular = reflect(rayDirection, payload.normal);
 
+                rayOrigin = hitPoint + payload.normal * c_RayPosNormalOffset;
                 rayDirection = normalize(lerp(specular, diffuse, payload.roughness));
-                resultColor += payload.emissiveColor * throughput;
-                throughput *= payload.color.rgb;
+
+                // Russian roulette
+                if (bounce > 2)
+                {
+                    float q = min(max(throughput.x, max(throughput.y, throughput.z)) + 0.001, 0.95);
+                    if (RandomFloat(rngState) > q) break;
+                    throughput /= q;
+                }
             }
             else
             {
-               resultColor += EvaluateEnvironmentLight(rayOrigin, rayDirection) * throughput;
-               break;
+                radiance += EvaluateEnvironmentLight(rayOrigin, rayDirection) * throughput;
+                break;
             }
         }
     
-        finalColor += resultColor;
+        finalColor += radiance;
     }
 
     finalColor = finalColor / sceneInfoBuffer.settings.maxSamples;
-    finalColor = LinearToSRGB(finalColor);
-    renderTarget[rayIndex] = float4(finalColor, 1);
+    HDRColor[rayIndex] = float4(finalColor, 1);
+    depth[rayIndex] = depthValue;
 
     // Accumulation
     {
-        float3 c0 = SRGBToLinear(prevRenderTarget[rayIndex].rgb);
-        float3 c1 = SRGBToLinear(renderTarget[rayIndex].rgb);
-
-        float t = 1.0 / (sceneInfoBuffer.view.frameIndex + 1);
-        renderTarget[rayIndex] = float4(LinearToSRGB(lerp(c0, c1, t)), 1);
+        float3 prev = accumulationOutput[rayIndex].rgb;
+        float3 curr = HDRColor[rayIndex].rgb;
+        uint frameIndex = sceneInfoBuffer.view.frameIndex;
+        float3 accumulated = (prev * frameIndex + curr) / (frameIndex + 1);
+        HDRColor[rayIndex] = float4(accumulated, 1);
+    }
+    
+    // Tone Mapping
+    {
+        float3 color = HDRColor[rayIndex].rgb;
+    
+        switch (postProssingInfo.tonMappingType)
+        {
+        case c_TonMapingType_None:                                                            break;
+        case c_TonMapingType_WhatEver:   color = Tonemap(color, 1.5);                         break;
+        case c_TonMapingType_ACES:       color = ACES(color);                                 break;
+        case c_TonMapingType_ACESFitted: color = ACESFitted(color);                           break;
+        case c_TonMapingType_Filmic:     color = Filmic(color, postProssingInfo.exposure);    break;
+        case c_TonMapingType_Reinhard:   color = Reinhard(color, postProssingInfo.exposure);  break;
+        }
+        
+        color = color = pow(color, 1 / postProssingInfo.gamma);
+        LDRColor[rayIndex] = float4(color, 1);
     }
 }
 
@@ -384,12 +432,13 @@ void ClosestHit(inout HitInfo payload : SV_RayPayload, HitAttributes attr : SV_I
     uint instanceID     = InstanceID();
     uint primitiveIndex = PrimitiveIndex();
     uint geometryIndex  = GeometryIndex();
+    float3 rayDirection = WorldRayDirection();
 
     GeometrySample gs = SampleGeometry(instanceID, primitiveIndex, geometryIndex, attr.barycentrics);
 
     float2 uv = mul(float3(gs.texcoord, 1.0), gs.material.uvMat).xy;
     
-    float4 baseColor = float4(SRGBToLinear(gs.material.baseColor.rgb), gs.material.baseColor.a);
+    float4 baseColor = gs.material.baseColor;
     if (gs.material.baseTextureIndex != c_Invalid)
     {
         Texture2D texture  = bindlessTextures[NonUniformResourceIndex(gs.material.baseTextureIndex)];
@@ -406,36 +455,41 @@ void ClosestHit(inout HitInfo payload : SV_RayPayload, HitAttributes attr : SV_I
     }
 
     float metallic  = gs.material.metallic;
-    float roughness = gs.material.roughness;
+    float roughness = max(gs.material.roughness, 0.001);
     if (gs.material.metallicRoughnessTextureIndex != c_Invalid)
     {
         Texture2D texture = bindlessTextures[NonUniformResourceIndex(gs.material.metallicRoughnessTextureIndex)];
         float3 texColor   = texture.SampleLevel(materialSampler, uv, 0).rgb;
         metallic          = texColor.r;
-        roughness         = texColor.g;
+        roughness         = max(texColor.g * texColor.g, 0.001);
     }
 
-    if (gs.material.normalTextureIndex != c_Invalid)
     {
-        Texture2D texture = bindlessTextures[NonUniformResourceIndex(gs.material.normalTextureIndex)];
-        float3 texColor   = texture.SampleLevel(materialSampler, uv, 0).rgb;
-        texColor          = normalize(texColor * 2.0f - 1.0f);
-        float3 t          = normalize(gs.tangent.xyz);
-        float3 n          = normalize(gs.geometryNormal);
-        float3 b          = normalize(cross(n, t) * gs.tangent.w);
-        float3x3 mat      = float3x3(t, b, n);
-        payload.normal    = normalize(mul(texColor, mat));
-    }
-    else
-    {
-        payload.normal = normalize(gs.geometryNormal);
+        float3 n = gs.geometryNormal;
+        float3 t = gs.tangent.xyz;
+        float3 b = normalize(cross(n, t) * gs.tangent.w);
+
+        payload.normal = n;
+        payload.tangent = t;
+        payload.bitangent = b;
+
+        if (gs.material.normalTextureIndex != c_Invalid)
+        {
+            Texture2D texture = bindlessTextures[NonUniformResourceIndex(gs.material.normalTextureIndex)];
+            float3 texNormal = texture.SampleLevel(materialSampler, uv, 0).rgb;
+            texNormal = normalize(texNormal * 2.0f - 1.0f);
+            float3x3 tbn = float3x3(t, b, n);
+            payload.normal = normalize(mul(texNormal, tbn));
+        }
+
+        payload.ffnormal = dot(n, -rayDirection) > 0.0 ? payload.normal : -payload.normal;
     }
 
-    payload.color         = baseColor;
-    payload.metallic      = metallic;
-    payload.roughness     = roughness;
-    payload.emissiveColor = emissiveColor;
-    payload.distance      = RayTCurrent();
+    payload.baseColor          = baseColor.rgb;
+    payload.metallic           = metallic;
+    payload.roughness          = roughness;
+    payload.emissive           = emissiveColor;
+    payload.distance           = RayTCurrent();
 }
 
 [shader("miss")]
