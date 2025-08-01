@@ -387,15 +387,36 @@ export namespace Editor {
         {
             Assets::Entity newEntity = scene->CreateEntity(node.name, parent.GetUUID());
     
-            if (node.meshIndex != Assets::c_Invalid)
+            if (node.index != Assets::c_Invalid)
             {
-                auto& meshSource = asset.Get<Assets::MeshSource>();
-                auto& mesh = meshSource.meshes[node.meshIndex];
-    
-                auto& dmc = newEntity.AddComponent<Assets::MeshComponent>();
-                dmc.meshSourceHandle = asset.GetHandle();
-                dmc.meshIndex = node.meshIndex;
+                switch (node.type)
+                {
+                case Assets::NodeType::Mesh:
+                {
+                    auto& meshSource = asset.Get<Assets::MeshSource>();
+                    auto& mesh = meshSource.meshes[node.index];
+
+                    auto& dmc = newEntity.AddComponent<Assets::MeshComponent>();
+                    dmc.meshSourceHandle = asset.GetHandle();
+                    dmc.meshIndex = node.index;
+
+                    break;
+                }
+                case Assets::NodeType::Camera:
+                {
+                    auto& meshSource = asset.Get<Assets::MeshSource>();
+                    auto& camera = meshSource.cameras[node.index];
+
+                    auto& cc = newEntity.AddComponent<Assets::CameraComponent>();
+                    cc.perspectiveNear = camera.zNear;
+                    cc.perspectiveFar = camera.zFar;
+                    cc.perspectiveFieldOfView = camera.yfov;
+
+                    break;
+                }
+                }
             }
+            
     
             Math::float3 position, scale, skew;
             Math::quat quaternion;
