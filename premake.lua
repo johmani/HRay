@@ -72,12 +72,14 @@ workspace "HRay"
             
                 "ImGui",
                 "Assets",
+                "Tiny2D",
             }
 
             buildoptions {
             
                 AddCppm("imgui"),
                 AddCppm("Assets"),
+                AddCppm("Tiny2D"),
             }
 
             SetupShaders(

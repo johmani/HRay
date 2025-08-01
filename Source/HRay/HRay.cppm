@@ -40,7 +40,7 @@ export namespace HRay {
             float halfHeight;
             Math::float2 halfWidthHeightPadding;
 
-            float minDistance = 0.001f;
+            float minDistance = 0.1f;
             float maxDistance = 1000.0f;
             float apertureRadius = 0.003f;
             float focusFalloff = 0.0f;
@@ -75,10 +75,27 @@ export namespace HRay {
         {
             int maxLighteBounces = 8;
             int maxSamples = 1;
-            float gamma = 2.2f;
-            int padding0;
+            Math::float2 padding0;
            
         } settings;
+    };
+
+    enum class TonMapingType : int
+    {
+        None,
+        WhatEver,
+        ACES,
+        ACESFitted,
+        Filmic,
+        Reinhard
+    };
+
+    struct PostProssingInfo
+    {
+        float exposure = 1.0f;
+        float gamma = 2.2f;
+
+        TonMapingType tonMappingType;
     };
 
     struct GeometryData
@@ -149,14 +166,21 @@ export namespace HRay {
         nvrhi::ShaderHandle cs;
 
         uint32_t textureCount = 0;
+
+        nvrhi::BufferHandle postProssingInfoBuffer;
+        PostProssingInfo postProssingInfo;
     };
 
     struct FrameData
     {
         nvrhi::BindingSetHandle bindingSet;
         nvrhi::BufferHandle sceneInfoBuffer;
-        nvrhi::TextureHandle prevRenderTarget;
-        nvrhi::TextureHandle renderTarget;
+
+        nvrhi::TextureHandle accumulationOutput;
+        nvrhi::TextureHandle HDRColor;
+        nvrhi::TextureHandle LDRColor;
+        nvrhi::TextureHandle depth;
+
         nvrhi::BufferHandle instanceBuffer;
         nvrhi::BufferHandle geometryBuffer;
         nvrhi::BufferHandle materialBuffer;
@@ -170,6 +194,7 @@ export namespace HRay {
         std::vector<DirectionalLightData> directionalLightData;
         std::map<Assets::AssetHandle, uint32_t> materials;
         SceneInfo sceneInfo;
+        
         uint32_t frameIndex = 0;
         float time = 0.0f;
         float lastTime = 0.0f;
@@ -197,4 +222,6 @@ export namespace HRay {
     void SubmitSkyLight(RendererData& data, FrameData& frameData, const Assets::DynamicSkyLightComponent& light);
     void ReleaseTexture(RendererData& data, Assets::Texture* texture);
     void Clear(FrameData& frameData);
+    nvrhi::ITexture* GetColorTarget(FrameData& frameData);
+    nvrhi::ITexture* GetDepthTarget(FrameData& frameData);
 }

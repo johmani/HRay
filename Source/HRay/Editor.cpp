@@ -12,6 +12,7 @@ import Assets;
 import simdjson;
 import magic_enum;
 import Editor;
+import Tiny2D;
 
 using namespace HE;
 
@@ -243,6 +244,11 @@ void Editor::App::OnAttach()
         InitEntityFactory();
     }
 
+    // Tiny2D
+    {
+        Tiny2D::Init(ctx.device);
+    }
+
     // icons
     {
         HE_PROFILE_SCOPE("Load Icons");
@@ -343,6 +349,8 @@ void Editor::App::OnDetach()
 
     Editor::Serialize();
     Editor::GetAssetManager().UnSubscribe(ctx.assetEventCallbackHandle);
+
+    Tiny2D::Shutdown();
 
     delete App::s_Context;
 }
@@ -527,13 +535,13 @@ void Editor::App::OnUpdate(const FrameInfo& info)
                     for (int i = 0; i <= ctx.frameStep; i++)
                         OnUpdateFrame();
 
-                    Editor::Save(ctx.device, ctx.fd.renderTarget, ctx.outputPath, ctx.frameIndex);
+                    auto rt = HRay::GetColorTarget(ctx.fd);
+                    Editor::Save(ctx.device, rt, ctx.outputPath, ctx.frameIndex);
 
                     ctx.sampleCount = 0;
                     ctx.frameIndex += ctx.frameStep;
                     ctx.frameIndex = Math::min(ctx.frameIndex, ctx.frameEnd);
 
-                    HRay::Clear(ctx.fd);
                     Editor::Clear();
                     if (ctx.frameIndex >= ctx.frameEnd)
                         Stop();
@@ -944,20 +952,15 @@ Assets::Entity Editor::GetSceneCamera(Assets::Scene* scene)
 
 void Editor::SetRendererToSceneCameraProp(HRay::FrameData& frameData, const Assets::CameraComponent& c)
 {
+    frameData.sceneInfo.view.minDistance = c.perspectiveNear;
+    frameData.sceneInfo.view.maxDistance = c.perspectiveFar;
+    frameData.sceneInfo.view.fov = c.perspectiveFieldOfView;
+
     frameData.sceneInfo.view.enableDepthOfField = c.depthOfField.enabled;
     frameData.sceneInfo.view.enableVisualFocusDistance = c.depthOfField.enableVisualFocusDistance && c.depthOfField.enabled;
     frameData.sceneInfo.view.apertureRadius = c.depthOfField.apertureRadius;
     frameData.sceneInfo.view.focusFalloff = c.depthOfField.focusFalloff;
     frameData.sceneInfo.view.focusDistance = c.depthOfField.focusDistance;
-}
-
-void Editor::SetRendererToEditorCameraProp(HRay::FrameData& frameData)
-{
-    frameData.sceneInfo.view.enableDepthOfField = false;
-    frameData.sceneInfo.view.enableVisualFocusDistance = false;
-    frameData.sceneInfo.view.apertureRadius = 0;
-    frameData.sceneInfo.view.focusFalloff = 0;
-    frameData.sceneInfo.view.focusDistance = 10;
 }
 
 void Editor::Animate()
