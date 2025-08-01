@@ -1483,9 +1483,11 @@ HE::ApplicationContext* HE::CreateApplication(ApplicationCommandLineArgs args)
         desc.workingDirectory = std::filesystem::path(args[0]).parent_path();
 #endif
 
-    //desc.deviceDesc.enableGPUValidation = true;
-    //desc.deviceDesc.enableDebugRuntime = true;
-    //desc.deviceDesc.enableNvrhiValidationLayer = true;
+#if HE_DEBUG
+    desc.deviceDesc.enableGPUValidation = true;
+    desc.deviceDesc.enableDebugRuntime = true;
+    desc.deviceDesc.enableNvrhiValidationLayer = true;
+#endif
 
     desc.deviceDesc.enableRayTracingExtensions = true;
     desc.deviceDesc.enableComputeQueue = true;
