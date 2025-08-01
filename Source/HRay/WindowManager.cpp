@@ -6,6 +6,24 @@ import ImGui;
 import Editor;
 import simdjson;
 
+Editor::WindowManager::WindowManager()
+{
+    scripts.reserve(100);
+    descs.reserve(100);
+}
+
+Editor::WindowManager::~WindowManager()
+{
+    for (auto& script : scripts)
+    {
+        if (script.instance)
+        {
+            script.instance->OnDestroy();
+            script.DestroyScript(&script);
+        }
+    }
+}
+
 void Editor::DistroyWindow(Editor::WindowHandle handle)
 {
     auto& ctx = Editor::GetContext();

@@ -90,11 +90,8 @@ export namespace Editor {
         std::vector<WindowDesc> descs;
         std::map<std::string, bool> state;
 
-        WindowManager()
-        {
-            scripts.reserve(100);
-            descs.reserve(100);
-        }
+        WindowManager();
+        ~WindowManager();
     };
 
     void DistroyWindow(WindowHandle handle);
