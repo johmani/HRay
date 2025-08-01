@@ -1229,14 +1229,14 @@ void Editor::Save(nvrhi::IDevice* device, nvrhi::ITexture* texture, const std::s
 {
     if (!std::filesystem::exists(directory))
     {
-        HE_ERROR("Invalid Path {}", directory);
+        HE_ERROR("Invalid path: {}", directory);
         return;
     }
 
-    auto filePath = std::format("{}/{}.png", directory, frameIndex);
+    std::string filePath = std::format("{}/{}.png", directory, frameIndex);
 
+    const auto& desc = texture->getDesc();
     auto textureState = nvrhi::ResourceStates::UnorderedAccess;
-    const nvrhi::TextureDesc& desc = texture->getDesc();
 
     auto commandList = device->createCommandList({ .enableImmediateExecution = true });
     commandList->open();
@@ -1260,7 +1260,7 @@ void Editor::Save(nvrhi::IDevice* device, nvrhi::ITexture* texture, const std::s
     commandList->close();
     device->executeCommandList(commandList);
 
-    HE::Jops::SubmitTask([device, filePath, desc, stagingTexture]() {
+    HE::Jops::SubmitTask([device, filePath, stagingTexture]() {
 
         size_t rowPitch = 0;
         void* pData = device->mapStagingTexture(stagingTexture, nvrhi::TextureSlice(), nvrhi::CpuAccessMode::Read, &rowPitch);
@@ -1270,39 +1270,65 @@ void Editor::Save(nvrhi::IDevice* device, nvrhi::ITexture* texture, const std::s
         uint32_t width = texDesc.width;
         uint32_t height = texDesc.height;
 
-        if (texDesc.format != nvrhi::Format::RGBA16_UNORM)
+        if (texDesc.format != nvrhi::Format::RGBA8_UNORM && texDesc.format != nvrhi::Format::RGBA16_UNORM)
         {
-            HE_ERROR("Texture format is not RGBA16_UNORM");
+            HE_ERROR("Unsupported texture format: {}. Expected RGBA8 or RGBA16.", static_cast<int>(texDesc.format));
             device->unmapStagingTexture(stagingTexture);
             return;
         }
 
-        std::vector<uint8_t> rgba8Data(width * height * 4); // 4 bytes per pixel (RGBA8)
-        const uint16_t* src = (const uint16_t*)pData;
-        for (uint32_t y = 0; y < height; y++)
+        std::vector<uint8_t> rgba8Data(width * height * 4);
+        float invGamma = 1.0f / 2.2f;
+
+        for (uint32_t y = 0; y < height; ++y)
         {
-            const uint16_t* rowSrc = src + (y * rowPitch / sizeof(uint16_t));
-            for (uint32_t x = 0; x < width; x++)
+            if (texDesc.format == nvrhi::Format::RGBA16_UNORM)
             {
-                uint32_t pixelIdx = (y * width + x) * 4;
-                float gamma = 2.2f;
-                float invGamma = 1.0f / gamma;
-                rgba8Data[pixelIdx + 0] = (uint8_t)(255.0f * pow((float)rowSrc[x * 4 + 0] / 65535.0f, invGamma)); // R
-                rgba8Data[pixelIdx + 1] = (uint8_t)(255.0f * pow((float)rowSrc[x * 4 + 1] / 65535.0f, invGamma)); // G
-                rgba8Data[pixelIdx + 2] = (uint8_t)(255.0f * pow((float)rowSrc[x * 4 + 2] / 65535.0f, invGamma)); // B
-                rgba8Data[pixelIdx + 3] = (uint8_t)(rowSrc[x * 4 + 3] >> 8);                                      // A
+                const uint16_t* row = reinterpret_cast<const uint16_t*>(pData) + (y * rowPitch / sizeof(uint16_t));
+                for (uint32_t x = 0; x < width; ++x)
+                {
+                    uint32_t idx = (y * width + x) * 4;
+
+                    // RGB
+                    for (int c = 0; c < 3; ++c)
+                    {
+                        float value = row[x * 4 + c] / 65535.0f;
+                        rgba8Data[idx + c] = static_cast<uint8_t>(std::clamp(std::pow(value, invGamma) * 255.0f, 0.0f, 255.0f));
+                    }
+
+                    // Alpha
+                    rgba8Data[idx + 3] = static_cast<uint8_t>(row[x * 4 + 3] >> 8);
+                }
+            }
+            else if (texDesc.format == nvrhi::Format::RGBA8_UNORM)
+            {
+                const uint8_t* row = reinterpret_cast<const uint8_t*>(pData) + y * rowPitch;
+                for (uint32_t x = 0; x < width; ++x)
+                {
+                    uint32_t idx = (y * width + x) * 4;
+
+                    // RGB
+                    for (int c = 0; c < 3; ++c)
+                    {
+                        float value = row[x * 4 + c] / 255.0f;
+                        rgba8Data[idx + c] = static_cast<uint8_t>(std::clamp(std::pow(value, invGamma) * 255.0f, 0.0f, 255.0f));
+                    }
+
+                    // Alpha
+                    rgba8Data[idx + 3] = row[x * 4 + 3];
+                }
             }
         }
 
-        // Write to PNG file
         int result = HE::Image::SaveAsPNG(filePath.c_str(), width, height, 4, rgba8Data.data(), width * 4);
-        if (!result)
+
+        if (result)
         {
-            HE_ERROR("Failed to write PNG file: {}", filePath);
+            HE_INFO("Successfully wrote PNG file: {}", filePath);
         }
         else
         {
-            HE_INFO("Successfully wrote PNG file: {}", filePath);
+            HE_ERROR("Failed to write PNG file: {}", filePath);
         }
 
         device->unmapStagingTexture(stagingTexture);
