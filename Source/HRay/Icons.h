@@ -33,3 +33,4 @@
 #define Icon_Camera        ICON_FA_CAMERA
 #define Icon_TV            ICON_FA_TV
 #define Icon_Film          ICON_FA_FILM
+#define Icon_Bug           ICON_FA_BUG
