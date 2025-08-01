@@ -1142,7 +1142,7 @@ void Editor::CreateNewProject(const std::filesystem::path& path, std::string pro
     Editor::Deserialize();
 }
 
-void OpenStartMeue()
+void Editor::OpenStartMeue()
 {
     auto& ctx = Editor::GetContext();
     ctx.enableStartMenu = true;
