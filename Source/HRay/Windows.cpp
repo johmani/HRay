@@ -1791,18 +1791,17 @@ void Editor::RendererSettingsWindow::OnUpdate(HE::Timestep ts)
     
             if (ImField::DragInt("Max Lighte Bounces", &ctx.fd.sceneInfo.settings.maxLighteBounces)) Editor::Clear();
             if (ImField::DragInt("Max Samples", &ctx.fd.sceneInfo.settings.maxSamples)) Editor::Clear();
-            if (ImField::DragFloat("Exposure", &ctx.rd.postProssingInfo.exposure)) Editor::Clear();
-            if (ImField::DragFloat("Gamma", &ctx.rd.postProssingInfo.gamma)) Editor::Clear();
+            if (ImField::DragFloat("Exposure", &ctx.fd.sceneInfo.postProssing.exposure)) Editor::Clear();
+            if (ImField::DragFloat("Gamma", &ctx.fd.sceneInfo.postProssing.gamma)) Editor::Clear();
 
             {
                 int selected = 0;
-                auto currentTypeStr = magic_enum::enum_name<HRay::TonMapingType>(ctx.rd.postProssingInfo.tonMappingType);
+                auto currentTypeStr = magic_enum::enum_name<HRay::TonMapingType>(ctx.fd.sceneInfo.postProssing.tonMappingType);
                 auto types = magic_enum::enum_names<HRay::TonMapingType>();
                 if (ImField::Combo("TonMapingType", types, currentTypeStr, selected))
                 {
-                    ctx.rd.postProssingInfo.tonMappingType = magic_enum::enum_cast<HRay::TonMapingType>(types[selected]).value();
-                    auto s = magic_enum::enum_name<HRay::TonMapingType>(ctx.rd.postProssingInfo.tonMappingType);
-                  
+                    ctx.fd.sceneInfo.postProssing.tonMappingType = magic_enum::enum_cast<HRay::TonMapingType>(types[selected]).value();
+                    
                     Editor::Clear();
                 }
             }
