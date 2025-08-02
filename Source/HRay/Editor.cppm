@@ -42,7 +42,9 @@ export namespace Editor {
     {
         virtual ~Window() {}
         virtual void OnCreate() {}
+        virtual void OnBegin(HE::Timestep ts) {}
         virtual void OnUpdate(HE::Timestep ts) {}
+        virtual void OnEnd(HE::Timestep ts) {}
         virtual void OnDestroy() {}
         virtual void OnResize(uint32_t width, uint32_t height) {}
     };

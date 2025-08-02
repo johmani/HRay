@@ -904,6 +904,10 @@ void Editor::App::OnBegin(const FrameInfo& info)
 
     ctx.commandList->open();
     nvrhi::utils::ClearColorAttachment(ctx.commandList, info.fb, 0, nvrhi::Color(0.1f));
+
+    for (auto& w : ctx.windowManager.scripts)
+        if (w.instance)
+            w.instance->OnBegin(info.ts);
 }
 
 void Editor::App::OnEnd(const FrameInfo& info)
@@ -914,6 +918,10 @@ void Editor::App::OnEnd(const FrameInfo& info)
 
     ctx.commandList->close();
     ctx.device->executeCommandList(ctx.commandList);
+
+    for (auto& w : ctx.windowManager.scripts)
+        if (w.instance)
+            w.instance->OnEnd(info.ts);
 }
 
 void Editor::OnUpdateFrame()
