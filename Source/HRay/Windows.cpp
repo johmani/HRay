@@ -553,20 +553,20 @@ void Editor::ViewPortWindow::OnUpdate(HE::Timestep ts)
         }
 
         // Right Toolbar
-        
         {
-            Editor::BeginChildView("DebugBar", axisGizmoCorner);
+            Editor::BeginChildView("Right Toolbar", axisGizmoCorner);
 
             ImGui::ScopedStyle sswp(ImGuiStyleVar_WindowPadding, ImVec2(3.0f, 3.0f));
             
             {
                 ImVec2 buttonSize = ImVec2(18, 18) * io.FontGlobalScale + style.FramePadding * 2;
 
-                ImGui::BeginChild("TBN", { 0, 0 }, ImGuiChildFlags_AutoResizeX | ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_Borders);
+                ImGui::BeginChild("Overlay", { 0, 0 }, ImGuiChildFlags_AutoResizeX | ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_Borders);
                 
                 {
                     ImGui::ScopedFont sf(Editor::FontType::Blod, Editor::FontSize::Caption);
                     ImGui::ScopedStyle ss(ImGuiStyleVar_ButtonTextAlign, ImVec2(0.6f, 0.6f));
+
                     if (ImGui::SelectableButton(Icon_Mesh, buttonSize, openMeshDebuggingOverlay))
                     {
                         openMeshDebuggingOverlay = true;
@@ -629,9 +629,153 @@ void Editor::ViewPortWindow::OnUpdate(HE::Timestep ts)
                     }
                 }
 
+                ImGui::SameLine(0, 1);
+
+                {
+                    ImGui::ScopedFont sf(Editor::FontType::Blod, Editor::FontSize::Caption);
+                    ImGui::ScopedStyle ss(ImGuiStyleVar_ButtonTextAlign, ImVec2(0.6f, 0.6f));
+
+                    if (ImGui::SelectableButton(Icon_TV, buttonSize, openViewOverlay))
+                    {
+                        openViewOverlay = true;
+                        ImGui::OpenPopup("View Overlay");
+                    }
+                }
+
+                {
+                    ImGui::ScopedStyle ss(ImGuiStyleVar_WindowPadding, ImVec2(8, 8));
+                    ImGui::SetNextWindowSize({ 300 * io.FontGlobalScale, 0 });
+
+                    if (ImGui::BeginPopup("View Overlay"))
+                    {
+                        ImVec2 buttonSize = ImVec2(70, 16) * io.FontGlobalScale + style.FramePadding * 2;
+
+                        {
+                            ImGui::ScopedFont sf(Editor::FontType::Blod);
+                            ImGui::TextUnformatted("View Overlay");
+                        }
+
+                        ImGui::Dummy({ -1, 4 });
+
+                        {
+                            ImGui::TextUnformatted("Ton Maper");
+
+                            ImGui::ShiftCursorX((ImGui::GetContentRegionAvail().x - (buttonSize.x + 1) * 3) / 2);
+
+                            bool isNone = fd.sceneInfo.postProssing.tonMappingType == HRay::TonMapingType::None;
+                            if (ImGui::SelectableButton("None", buttonSize, isNone))
+                                fd.sceneInfo.postProssing.tonMappingType = HRay::TonMapingType::None;
+
+                            ImGui::SameLine(0, 1);
+
+                            bool isWhatEver = fd.sceneInfo.postProssing.tonMappingType == HRay::TonMapingType::WhatEver;
+                            if (ImGui::SelectableButton("WhatEver", buttonSize, isWhatEver))
+                                fd.sceneInfo.postProssing.tonMappingType = HRay::TonMapingType::WhatEver;
+
+                            ImGui::SameLine(0, 1);
+
+                            bool isACES = fd.sceneInfo.postProssing.tonMappingType == HRay::TonMapingType::ACES;
+                            if (ImGui::SelectableButton("ACES", buttonSize, isACES))
+                                fd.sceneInfo.postProssing.tonMappingType = HRay::TonMapingType::ACES;
+
+
+                            ImGui::ShiftCursorX((ImGui::GetContentRegionAvail().x - (buttonSize.x + 1) * 3) / 2);
+
+
+                            bool isACESFitted = fd.sceneInfo.postProssing.tonMappingType == HRay::TonMapingType::ACESFitted;
+                            if (ImGui::SelectableButton("ACESFitted", buttonSize, isACESFitted))
+                                fd.sceneInfo.postProssing.tonMappingType = HRay::TonMapingType::ACESFitted;
+
+                            ImGui::SameLine(0, 1);
+
+                            bool isFilmic = fd.sceneInfo.postProssing.tonMappingType == HRay::TonMapingType::Filmic;
+                            if (ImGui::SelectableButton("Filmic", buttonSize, isFilmic))
+                                fd.sceneInfo.postProssing.tonMappingType = HRay::TonMapingType::Filmic;
+
+                            ImGui::SameLine(0, 1);
+
+                            bool isReinhard = fd.sceneInfo.postProssing.tonMappingType == HRay::TonMapingType::Reinhard;
+                            if (ImGui::SelectableButton("Reinhard", buttonSize, isReinhard))
+                                fd.sceneInfo.postProssing.tonMappingType = HRay::TonMapingType::Reinhard;
+                        }
+
+                        ImGui::Dummy({ -1, 8 });
+
+                        {
+                            ImGui::TextUnformatted("Rindering Mode");
+
+                            ImGui::ShiftCursorX((ImGui::GetContentRegionAvail().x - (buttonSize.x + 1) * 1) / 2);
+
+                            bool isPathTracing = fd.sceneInfo.settings.renderingMode == HRay::RenderingMode::PathTracing;
+                            if (ImGui::SelectableButton("PathTracing", buttonSize, isPathTracing))
+                            {
+                                fd.sceneInfo.settings.renderingMode = HRay::RenderingMode::PathTracing;
+                                HRay::Clear(fd);
+                            }
+
+                            ImGui::ShiftCursorX((ImGui::GetContentRegionAvail().x - (buttonSize.x + 1) * 3) / 2);
+
+                            bool isNormals = fd.sceneInfo.settings.renderingMode == HRay::RenderingMode::Normals;
+                            if (ImGui::SelectableButton("Normals", buttonSize, isNormals))
+                            {
+                                fd.sceneInfo.settings.renderingMode = HRay::RenderingMode::Normals;
+                                HRay::Clear(fd);
+                            }
+
+                            ImGui::SameLine(0, 1);
+
+                            bool isTangent = fd.sceneInfo.settings.renderingMode == HRay::RenderingMode::Tangent;
+                            if (ImGui::SelectableButton("Tangent", buttonSize, isTangent))
+                            {
+                                fd.sceneInfo.settings.renderingMode = HRay::RenderingMode::Tangent;
+                                HRay::Clear(fd);
+                            }
+
+                            ImGui::SameLine(0, 1);
+
+                            bool isBitangent = fd.sceneInfo.settings.renderingMode == HRay::RenderingMode::Bitangent;
+                            if (ImGui::SelectableButton("Bitangent", buttonSize, isBitangent))
+                            {
+                                fd.sceneInfo.settings.renderingMode = HRay::RenderingMode::Bitangent;
+                                HRay::Clear(fd);
+                            }
+                        }
+
+                        ImGui::EndPopup();
+                    }
+                    else
+                    {
+                        openViewOverlay = false;
+                    }
+                }
+
                 ImGui::EndChild();
             }
 
+            ImGui::SameLine(0, 2);
+
+            {
+                ImGui::ScopedFont sf(Editor::FontType::Blod, Editor::FontSize::Caption);
+                ImGui::ScopedStyle ss(ImGuiStyleVar_ButtonTextAlign, ImVec2(0.6f, 0.6f));
+                ImVec2 buttonSize = ImVec2(18, 18) * io.FontGlobalScale + style.FramePadding * 2;
+            
+                ImGui::BeginChild("Renderers", { 0, 0 }, ImGuiChildFlags_AutoResizeX | ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_Borders);
+            
+                if (ImGui::SelectableButton(Icon_Camera, buttonSize, !enableMeshDebuging))
+                {
+                    debug.enableMeshNormals = debug.enableMeshTangents = debug.enableMeshBitangents = debug.enableMeshAABB = false;
+                }
+            
+                ImGui::SameLine(0, 1);
+            
+                if (ImGui::SelectableButton(Icon_Bug, buttonSize, enableMeshDebuging))
+                {
+                    debug.enableMeshNormals = debug.enableMeshTangents = debug.enableMeshBitangents = debug.enableMeshAABB = true;
+                }
+            
+                ImGui::EndChild();
+            }
+            
             Editor::EndChildView();
         }
 
