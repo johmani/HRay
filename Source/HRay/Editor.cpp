@@ -2,6 +2,14 @@
 #include "Icons.h"
 #include "HydraEngine/Base.h"
 
+#if NVRHI_HAS_D3D12
+#include "Embeded/dxil/PixelReadback_Main.bin.h"
+#endif
+
+#if NVRHI_HAS_VULKAN
+#include "Embeded/spirv/PixelReadback_Main.bin.h"
+#endif
+
 import HE;
 import std;
 import Math;
@@ -494,7 +502,7 @@ void Editor::App::OnUpdate(const FrameInfo& info)
                     {
                         auto& meshSource = asset.Get<Assets::MeshSource>();
                         auto& mesh = meshSource.meshes[dm.meshIndex];
-                        HRay::SubmitMesh(ctx.rd, ctx.fd, asset, mesh, wt, ctx.commandList);
+                        HRay::SubmitMesh(ctx.rd, ctx.fd, asset, mesh, wt, (uint32_t)e, ctx.commandList);
                     }
                 }
             }
@@ -1381,6 +1389,115 @@ void Editor::AddEntityFactory(const std::string& key, std::function<Assets::Enti
 {
     auto& ctx = Editor::GetContext();
     ctx.createEnityFucntions[key] = function;
+}
+
+struct PixelReadbackConstants
+{
+    Math::uvec2 pixelPosition;
+};
+
+void Editor::PixelReadbackPass::Init(nvrhi::IDevice* pDevice)
+{
+    constexpr uint32_t c_MaxRenderPassConstantBufferVersions = 16;
+
+    device = pDevice;
+
+    {
+        nvrhi::ShaderDesc desc;
+        desc.shaderType = nvrhi::ShaderType::Compute;
+        desc.entryName = "Main";
+        cs = HE::RHI::CreateStaticShader(device, STATIC_SHADER(PixelReadback_Main), nullptr, desc);
+        HE_VERIFY(cs);
+    }
+
+    nvrhi::BufferDesc bufferDesc;
+    bufferDesc.byteSize = sizeof(PixelReadbackConstants);
+    bufferDesc.format = nvrhi::Format::R32_UINT;
+    bufferDesc.canHaveUAVs = true;
+    bufferDesc.initialState = nvrhi::ResourceStates::CopySource;
+    bufferDesc.keepInitialState = true;
+    bufferDesc.debugName = "PixelReadbackPass/IntermediateBuffer";
+    bufferDesc.canHaveTypedViews = true;
+    intermediateBuffer = device->createBuffer(bufferDesc);
+
+    bufferDesc.canHaveUAVs = false;
+    bufferDesc.cpuAccess = nvrhi::CpuAccessMode::Read;
+    bufferDesc.debugName = "PixelReadbackPass/ReadbackBuffer";
+    readbackBuffer = device->createBuffer(bufferDesc);
+
+    nvrhi::BufferDesc constantBufferDesc;
+    constantBufferDesc.byteSize = sizeof(PixelReadbackConstants);
+    constantBufferDesc.isConstantBuffer = true;
+    constantBufferDesc.isVolatile = true;
+    constantBufferDesc.debugName = "PixelReadbackPass/Constants";
+    constantBufferDesc.maxVersions = c_MaxRenderPassConstantBufferVersions;
+    constantBuffer = device->createBuffer(constantBufferDesc);
+
+    nvrhi::BindingLayoutDesc layoutDesc;
+    layoutDesc.visibility = nvrhi::ShaderType::Compute;
+    layoutDesc.bindings = {
+        nvrhi::BindingLayoutItem::VolatileConstantBuffer(0),
+        nvrhi::BindingLayoutItem::Texture_SRV(0),
+        nvrhi::BindingLayoutItem::TypedBuffer_UAV(0)
+    };
+
+    bindingLayout = device->createBindingLayout(layoutDesc);
+
+    nvrhi::ComputePipelineDesc pipelineDesc;
+    pipelineDesc.bindingLayouts = { bindingLayout };
+    pipelineDesc.CS = cs;
+    pipeline = device->createComputePipeline(pipelineDesc);
+}
+
+Editor::PixelReadbackPass::~PixelReadbackPass()
+{
+    if (mapedBuffer)
+        device->unmapBuffer(readbackBuffer);
+}
+
+void Editor::PixelReadbackPass::Capture(
+    nvrhi::ICommandList* commandList,
+    nvrhi::ITexture* inputTexture,
+    Math::uvec2 pixelPosition
+)
+{
+    if (!bindingSet)
+    {
+        nvrhi::BindingSetDesc setDesc;
+        setDesc.bindings = {
+            nvrhi::BindingSetItem::ConstantBuffer(0, constantBuffer),
+            nvrhi::BindingSetItem::Texture_SRV(0, inputTexture),
+            nvrhi::BindingSetItem::TypedBuffer_UAV(0, intermediateBuffer)
+        };
+
+        bindingSet = device->createBindingSet(setDesc, bindingLayout);
+    }
+
+    PixelReadbackConstants constants = {};
+    constants.pixelPosition = pixelPosition;
+    commandList->writeBuffer(constantBuffer, &constants, sizeof(constants));
+
+    nvrhi::ComputeState state;
+    state.pipeline = pipeline;
+    state.bindings = { bindingSet };
+    commandList->setComputeState(state);
+    commandList->dispatch(1, 1, 1);
+
+    commandList->copyBuffer(readbackBuffer, 0, intermediateBuffer, 0, readbackBuffer->getDesc().byteSize);
+}
+
+uint32_t Editor::PixelReadbackPass::ReadUInt()
+{
+    if (!mapedBuffer)
+    {
+        mapedBuffer = device->mapBuffer(readbackBuffer, nvrhi::CpuAccessMode::Read);
+        HE_ASSERT(mapedBuffer);
+    }
+
+    uint32_t values = *static_cast<uint32_t*>(mapedBuffer);
+
+    //device->unmapBuffer(readbackBuffer);
+    return values;
 }
 
 void Editor::Serialize()

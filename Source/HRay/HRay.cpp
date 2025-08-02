@@ -36,6 +36,7 @@ struct HitInfo
     Math::float3 tangent;
     Math::float3 bitangent;
     float distance;
+    uint32_t entityID;
 
     Math::float3 baseColor;
     Math::float3 emissive;
@@ -106,6 +107,10 @@ static void CreateOrResizeRenderTarget(HRay::RendererData& data, HRay::FrameData
     desc.format = nvrhi::Format::D32;
     desc.debugName = "Depth";
     frameData.depth = data.device->createTexture(desc);
+
+    desc.format = nvrhi::Format::R32_UINT;
+    desc.debugName = "entitiesID";
+    frameData.entitiesID = data.device->createTexture(desc);
 
     frameData.bindingSet.Reset();
 }
@@ -261,6 +266,7 @@ void HRay::Init(RendererData& data, nvrhi::DeviceHandle pDevice, nvrhi::CommandL
            nvrhi::BindingLayoutItem::Texture_UAV(1),
            nvrhi::BindingLayoutItem::Texture_UAV(2),
            nvrhi::BindingLayoutItem::Texture_UAV(3),
+           nvrhi::BindingLayoutItem::Texture_UAV(4),
            nvrhi::BindingLayoutItem::Sampler(0),
            nvrhi::BindingLayoutItem::VolatileConstantBuffer(0)
         };
@@ -398,6 +404,8 @@ void HRay::EndScene(RendererData& data, FrameData& frameData, nvrhi::ICommandLis
             HE_ASSERT(frameData.HDRColor);
             HE_ASSERT(frameData.accumulationOutput);
             HE_ASSERT(frameData.LDRColor);
+            HE_ASSERT(frameData.depth);
+            HE_ASSERT(frameData.entitiesID);
             HE_ASSERT(frameData.sceneInfoBuffer);
 
             nvrhi::BindingSetDesc bindingSetDesc;
@@ -411,6 +419,7 @@ void HRay::EndScene(RendererData& data, FrameData& frameData, nvrhi::ICommandLis
                 nvrhi::BindingSetItem::Texture_UAV(1, frameData.accumulationOutput),
                 nvrhi::BindingSetItem::Texture_UAV(2, frameData.LDRColor),
                 nvrhi::BindingSetItem::Texture_UAV(3, frameData.depth),
+                nvrhi::BindingSetItem::Texture_UAV(4, frameData.entitiesID),
                 nvrhi::BindingSetItem::Sampler(0, data.anisotropicWrapSampler),
                 nvrhi::BindingSetItem::ConstantBuffer(0, frameData.sceneInfoBuffer),
             };
@@ -441,7 +450,7 @@ void HRay::EndScene(RendererData& data, FrameData& frameData, nvrhi::ICommandLis
     frameData.time = HE::Application::GetTime() - frameData.lastTime;
 }
 
-void HRay::SubmitMesh(RendererData& data, FrameData& frameData, Assets::Asset asset, Assets::Mesh& mesh, Math::float4x4 wt, nvrhi::ICommandList* cl)
+void HRay::SubmitMesh(RendererData& data, FrameData& frameData, Assets::Asset asset, Assets::Mesh& mesh, Math::float4x4 wt, uint32_t id, nvrhi::ICommandList* cl)
 {
     auto meshSource = mesh.meshSource;
 
@@ -586,6 +595,7 @@ void HRay::SubmitMesh(RendererData& data, FrameData& frameData, Assets::Asset as
     // InstanceData
     {
         InstanceData& idata = frameData.instanceData[frameData.instanceCount];
+        idata.id = id;
         idata.transform = wt;
         idata.firstGeometryIndex = frameData.geometryCount;
     }

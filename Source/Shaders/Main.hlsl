@@ -90,6 +90,7 @@ struct GeometryData
 
 struct InstanceData
 {
+    uint id;
     uint firstGeometryIndex;
     float4x4 transform;
 };
@@ -139,12 +140,14 @@ RWTexture2D<float4> HDRColor : register(u0);
 RWTexture2D<float4> accumulationOutput : register(u1);
 RWTexture2D<float4> LDRColor : register(u2);
 RWTexture2D<float> depth : register(u3);
+RWTexture2D<uint> entitiesID : register(u4);
 
 typedef BuiltInTriangleIntersectionAttributes HitAttributes;
 
 struct GeometrySample
 {
     Material material;
+    int entityID;
     int materialID;
 
     float3 objectSpacePosition;
@@ -167,6 +170,8 @@ GeometrySample SampleGeometry(
     GeometryData geometry = geometryData[instance.firstGeometryIndex + geometryIndex];
     gs.material = materialData[geometry.materialIndex];
     gs.materialID = geometry.materialIndex;
+
+    gs.entityID = instance.id;
 
     ByteAddressBuffer indexBuffer = bindlessBuffers[NonUniformResourceIndex(geometry.indexBufferIndex)];
     ByteAddressBuffer vertexBuffer = bindlessBuffers[NonUniformResourceIndex(geometry.vertexBufferIndex)];
@@ -328,6 +333,7 @@ void RayGen()
 
     float3 finalColor = 0;
     float depthValue = 1000;
+    uint entityID = 4294967295u;
 
     for (uint i = 0; i < sceneInfoBuffer.settings.maxSamples; i++)
     {
@@ -358,11 +364,6 @@ void RayGen()
             TraceRay(TLAS, flags, 0xFF, 0, 0, 0, ray, payload);
             float3 hitPoint = rayOrigin + rayDirection * payload.distance;
         
-            if (bounce == 0)
-            {
-                depthValue = ComputeDepth(rayOrigin, sceneInfoBuffer.view.front, hitPoint, near, far);
-            }
-
             if (sceneInfoBuffer.view.enableVisualFocusDistance && bounce == 0 && length(hitPoint - focusPoint) <= 0.2)
                 radiance = lerp(radiance, float3(0, 1, 0), 0.1);
 
@@ -371,6 +372,7 @@ void RayGen()
                 if (bounce == 0)
                 {
                     depthValue = ComputeDepth(rayOrigin, sceneInfoBuffer.view.front, hitPoint, near, far);
+                    entityID = payload.entityID;
                 }
 
                 if (sceneInfoBuffer.settings.renderingMode == c_RenderingMode_Normals)
@@ -419,6 +421,7 @@ void RayGen()
     finalColor = finalColor / sceneInfoBuffer.settings.maxSamples;
     HDRColor[rayIndex] = float4(finalColor, 1);
     depth[rayIndex] = depthValue;
+    entitiesID[rayIndex] = entityID;
 
     // Accumulation
     {
@@ -512,6 +515,7 @@ void ClosestHit(inout HitInfo payload : SV_RayPayload, HitAttributes attr : SV_I
     payload.roughness          = roughness;
     payload.emissive           = emissiveColor;
     payload.distance           = RayTCurrent();
+    payload.entityID           = gs.entityID;
 }
 
 [shader("miss")]

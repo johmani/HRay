@@ -42,6 +42,7 @@ struct HitInfo
     float3 tangent;
     float3 bitangent;
     float distance;
+    uint entityID;
 
     float3 baseColor;
     float3 emissive;
