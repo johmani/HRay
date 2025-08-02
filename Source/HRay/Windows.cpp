@@ -37,6 +37,10 @@ static void CreateOrResizeRenderTarget(Editor::ViewPortWindow* viewPortWindow, n
     desc.debugName = "viewPortOutput";
     viewPortWindow->compositeTarget = ctx.device->createTexture(desc);
 
+    desc.debugName = "idTarget";
+    desc.format = nvrhi::Format::R32_UINT;
+    viewPortWindow->idTarget = ctx.device->createTexture(desc);
+
     viewPortWindow->compositeBindingSet.Reset();
     viewPortWindow->pixelReadbackPass.bindingSet.Reset();
 }
@@ -62,7 +66,10 @@ void Editor::ViewPortWindow::OnCreate()
            nvrhi::BindingLayoutItem::Texture_SRV(1),
            nvrhi::BindingLayoutItem::Texture_SRV(2),
            nvrhi::BindingLayoutItem::Texture_SRV(3),
+           nvrhi::BindingLayoutItem::Texture_SRV(4),
+           nvrhi::BindingLayoutItem::Texture_SRV(5),
            nvrhi::BindingLayoutItem::Texture_UAV(0),
+           nvrhi::BindingLayoutItem::Texture_UAV(1),
         };
 
         compositeBindingLayout = ctx.device->createBindingLayout(desc);
@@ -84,12 +91,40 @@ void Editor::ViewPortWindow::OnCreate()
     }
 }
 
+static void DrawIcon(
+    Math::float3 camPosition,
+    Math::float3 position,
+    bool isSelected,
+    const ImVec4& selectionColor,
+    nvrhi::ITexture* texture,
+    uint32_t id
+)
+{
+    Math::float3 directionToCamera = Math::normalize(camPosition - position);
+    Math::quat iconRotationQuat = Math::quatLookAt(-directionToCamera, { 0.0f, 1.0f, 0.0f });
+    Math::float3 iconRotationEuler = Math::eulerAngles(iconRotationQuat);
+
+    float dis = Math::length(camPosition - position); // distans from to icon - camera
+    float alfa = Math::clamp(float(pow(dis - 0.5f, 2) * dis) / 4.5f, 0.0f, 1.0f); // this make alfa value becoming (0-1) range under 2 meter
+
+    Math::vec4 color = isSelected ? Math::vec4(selectionColor.x, selectionColor.y, selectionColor.z, alfa) : Math::vec4{ 1.0f, 1.0f, 1.0f, alfa };
+   
+    Tiny2D::DrawQuad({
+        .position = position,
+        .rotation = iconRotationQuat,
+        .scale = { 1.0f, 1.0f, 1.0f },
+        .minUV = { 0.0f,0.0f },
+        .maxUV = { 1.0f,1.0f },
+        .color = color,
+        .texture = texture,
+        .id = id
+    });
+}
+
 void Editor::ViewPortWindow::OnUpdate(HE::Timestep ts)
 {
     auto& ctx = GetContext();
     Assets::Scene* scene = ctx.assetManager.GetAsset<Assets::Scene>(ctx.sceneHandle);
-
-    bool enableMeshDebuging = debug.enableMeshNormals || debug.enableMeshTangents || debug.enableMeshBitangents || debug.enableMeshAABB;
 
     {
         HE_PROFILE_SCOPE("Render");
@@ -100,7 +135,7 @@ void Editor::ViewPortWindow::OnUpdate(HE::Timestep ts)
 
             Math::float4x4 viewMatrix;
             Math::float4x4 projection;
-            Math::vec3 camPos;
+            Math::float3 camPos;
             float fov;
 
             if (previewMode && mainCameraEntity && cameraAnimation.state & Animation::None)
@@ -110,7 +145,7 @@ void Editor::ViewPortWindow::OnUpdate(HE::Timestep ts)
                 viewMatrix = Math::inverse(wt);
                 fov = c.perspectiveFieldOfView;
 
-                Math::vec3 s, skew;
+                Math::float3 s, skew;
                 Math::quat quaternion;
                 Math::vec4 perspective;
                 Math::decompose(wt, s, quaternion, camPos, skew, perspective);
@@ -147,13 +182,10 @@ void Editor::ViewPortWindow::OnUpdate(HE::Timestep ts)
 
             {
                 auto format = HRay::GetColorTarget(fd)->getDesc().format;
+
                 if (!compositeTarget)
                     CreateOrResizeRenderTarget(this, format, width, height);
-            }
 
-            if (enableMeshDebuging)
-            {
-                auto format = HRay::GetColorTarget(fd)->getDesc().format;
                 Tiny2D::BeginScene(
                     tiny2DView,
                     ctx.commandList,
@@ -164,6 +196,74 @@ void Editor::ViewPortWindow::OnUpdate(HE::Timestep ts)
                         8
                     }
                 );
+            }
+            
+            {
+                auto view = scene->registry.view<Assets::CameraComponent>();
+                for (auto e : view)
+                {
+                    Assets::Entity entity = { e, scene };
+                    auto& camera = entity.GetComponent<Assets::CameraComponent>();
+
+                    auto wt = entity.GetWorldSpaceTransformMatrix();
+
+                    Math::float3 cameraPosition, scale, skew;
+                    Math::quat cameraRotation;
+                    Math::float4 perspective;
+                    Math::decompose(wt, scale, cameraRotation, cameraPosition, skew, perspective);
+
+                    Math::vec4 selectionColor = { 0.9f,0.8f ,0.2f ,1.0f };
+                    bool isSelected = entity == Editor::GetSelectedEntity();
+
+                    DrawIcon(
+                        editorCamera->transform.position,
+                        cameraPosition,
+                        isSelected,
+                        Editor::GetColor(Editor::Color::ViewPortSelected),
+                        Editor::GetIcon(Editor::AppIcons::Camera),
+                        (uint32_t)e
+                    );
+
+                    if (!isSelected)
+                        continue;
+
+                    float fov = Math::radians(camera.perspectiveFieldOfView);
+                    float aspectRatio = float(width) / float(height);
+                    float nearPlane = camera.perspectiveNear;
+                    float farPlane = camera.perspectiveFar * 0.002f;
+                    float tanHalfFOV = std::tan(fov / 2.0f);
+
+                    // Step 3: Calculate near plane corners
+                    float nearHeight = 2.0f * nearPlane * tanHalfFOV;
+                    float nearWidth = nearHeight * aspectRatio;
+                    Math::float3 nearCenter = cameraPosition + Math::rotate(cameraRotation, Math::float3(0.0f, 0.0f, -nearPlane));
+                    Math::float3 nearTopLeft = nearCenter + Math::rotate(cameraRotation, Math::float3(-nearWidth / 2.0f, nearHeight / 2.0f, 0.0f));
+                    Math::float3 nearTopRight = nearCenter + Math::rotate(cameraRotation, Math::float3(nearWidth / 2.0f, nearHeight / 2.0f, 0.0f));
+                    Math::float3 nearBottomLeft = nearCenter + Math::rotate(cameraRotation, Math::float3(-nearWidth / 2.0f, -nearHeight / 2.0f, 0.0f));
+                    Math::float3 nearBottomRight = nearCenter + Math::rotate(cameraRotation, Math::float3(nearWidth / 2.0f, -nearHeight / 2.0f, 0.0f));
+
+                    // Step 4: Calculate far plane corners
+                    float farHeight = 2.0f * farPlane * tanHalfFOV;
+                    float farWidth = farHeight * aspectRatio;
+                    Math::float3 farCenter = cameraPosition + Math::rotate(cameraRotation, Math::float3(0.0f, 0.0f, -farPlane));
+                    Math::float3 farTopLeft = farCenter + Math::rotate(cameraRotation, Math::float3(-farWidth / 2.0f, farHeight / 2.0f, 0.0f));
+                    Math::float3 farTopRight = farCenter + Math::rotate(cameraRotation, Math::float3(farWidth / 2.0f, farHeight / 2.0f, 0.0f));
+                    Math::float3 farBottomLeft = farCenter + Math::rotate(cameraRotation, Math::float3(-farWidth / 2.0f, -farHeight / 2.0f, 0.0f));
+                    Math::float3 farBottomRight = farCenter + Math::rotate(cameraRotation, Math::float3(farWidth / 2.0f, -farHeight / 2.0f, 0.0f));
+
+                    //Math::float3 frustumColor = { 1.0f, 1.0f, 1.0f };
+                    float dis = Math::distance(farTopRight, farBottomRight);
+                    Math::float3 upPoint = farCenter + Math::normalize(farTopRight - farBottomRight) * dis;
+
+                    std::array<Math::float3, 5> nearPlanePoints = { nearTopLeft, nearTopRight, nearBottomRight, nearBottomLeft, nearTopLeft };
+                    std::array<Math::float3, 7> farPlanePoints = { farTopLeft, farTopRight, farBottomRight, farBottomLeft ,farTopLeft, upPoint, farTopRight };
+                    std::array<Math::float3, 8> nearFarConnectionPoint = { nearTopLeft, farTopLeft, nearTopRight, farTopRight, nearBottomLeft, farBottomLeft, nearBottomRight, farBottomRight };
+                    std::array<Math::float3, 3> upCameraPoints = { };
+
+                    Tiny2D::DrawLineStrip(nearPlanePoints, selectionColor);
+                    Tiny2D::DrawLineStrip(farPlanePoints, selectionColor);
+                    Tiny2D::DrawLineList(nearFarConnectionPoint, selectionColor);
+                }
             }
 
             {
@@ -177,7 +277,6 @@ void Editor::ViewPortWindow::OnUpdate(HE::Timestep ts)
             }
 
             {
-
                 auto view = scene->registry.view<Assets::MeshComponent>();
                 for (auto e : view)
                 {
@@ -277,6 +376,20 @@ void Editor::ViewPortWindow::OnUpdate(HE::Timestep ts)
                     auto& light = entity.GetComponent<Assets::DirectionalLightComponent>();
                     auto wt = entity.GetWorldSpaceTransformMatrix();
 
+                    Math::float3 position, scale, skew;
+                    Math::quat rotation;
+                    Math::vec4 perspective;
+                    Math::decompose(wt, scale, rotation, position, skew, perspective);
+
+                    DrawIcon(
+                        editorCamera->transform.position,
+                        position,
+                        entity == Editor::GetSelectedEntity(),
+                        Editor::GetColor(Editor::Color::ViewPortSelected),
+                        Editor::GetIcon(Editor::AppIcons::DirectionalLight),
+                        (uint32_t)e
+                    );
+
                     HRay::SubmitDirectionalLight(ctx.rd, fd, light, wt);
                 }
             }
@@ -287,6 +400,21 @@ void Editor::ViewPortWindow::OnUpdate(HE::Timestep ts)
                 {
                     Assets::Entity entity = { e, scene };
                     auto& dynamicSkyLight = entity.GetComponent<Assets::DynamicSkyLightComponent>();
+                    auto wt = entity.GetWorldSpaceTransformMatrix();
+
+                    Math::float3 position, scale, skew;
+                    Math::quat rotation;
+                    Math::vec4 perspective;
+                    Math::decompose(wt, scale, rotation, position, skew, perspective);
+
+                    DrawIcon(
+                        editorCamera->transform.position,
+                        position,
+                        entity == Editor::GetSelectedEntity(),
+                        Editor::GetColor(Editor::Color::ViewPortSelected),
+                        Editor::GetIcon(Editor::AppIcons::EnvLight),
+                        (uint32_t)e
+                    );
 
                     HRay::SubmitSkyLight(ctx.rd, fd, dynamicSkyLight);
                 }
@@ -295,6 +423,7 @@ void Editor::ViewPortWindow::OnUpdate(HE::Timestep ts)
             }
 
             HRay::EndScene(ctx.rd, fd, ctx.commandList, { viewMatrix, projection, camPos, fov, (uint32_t)width, (uint32_t)height });
+            Tiny2D::EndScene();
 
             {
                 HE_ASSERT(compositeTarget);
@@ -305,10 +434,7 @@ void Editor::ViewPortWindow::OnUpdate(HE::Timestep ts)
                 }
             }
 
-            if (enableMeshDebuging)
             {
-                Tiny2D::EndScene();
-
                 if (!compositeBindingSet)
                 {
                     HE_VERIFY(HRay::GetColorTarget(fd));
@@ -320,9 +446,14 @@ void Editor::ViewPortWindow::OnUpdate(HE::Timestep ts)
                     bindingSetDesc.bindings = {
                         nvrhi::BindingSetItem::Texture_SRV(0, Tiny2D::GetColorTarget(tiny2DView)),
                         nvrhi::BindingSetItem::Texture_SRV(1, Tiny2D::GetDepthTarget(tiny2DView)),
-                        nvrhi::BindingSetItem::Texture_SRV(2, HRay::GetColorTarget(fd)),
-                        nvrhi::BindingSetItem::Texture_SRV(3, HRay::GetDepthTarget(fd)),
+                        nvrhi::BindingSetItem::Texture_SRV(2, Tiny2D::GetEntitiesIDTarget(tiny2DView)),
+
+                        nvrhi::BindingSetItem::Texture_SRV(3, HRay::GetColorTarget(fd)),
+                        nvrhi::BindingSetItem::Texture_SRV(4, HRay::GetDepthTarget(fd)),
+                        nvrhi::BindingSetItem::Texture_SRV(5, HRay::GetEntitiesIDTarget(fd)),
+
                         nvrhi::BindingSetItem::Texture_UAV(0, compositeTarget),
+                        nvrhi::BindingSetItem::Texture_UAV(1, idTarget),
                     };
 
                     compositeBindingSet = ctx.device->createBindingSet(bindingSetDesc, compositeBindingLayout);
@@ -330,9 +461,9 @@ void Editor::ViewPortWindow::OnUpdate(HE::Timestep ts)
 
                 ctx.commandList->setComputeState({ computePipeline , { compositeBindingSet } });
                 ctx.commandList->dispatch(width / 8, height / 8);
-            }
 
-            pixelReadbackPass.Capture(ctx.commandList, fd.entitiesID, pixelPosition);
+                pixelReadbackPass.Capture(ctx.commandList, idTarget, pixelPosition);
+            }
 
             if (cameraPrevPos != editorCamera->transform.position || cameraPrevRot != editorCamera->transform.rotation)
             {
@@ -447,15 +578,9 @@ void Editor::ViewPortWindow::OnUpdate(HE::Timestep ts)
             editorCamera->OnUpdate(ts);
         }
 
-        if (compositeTarget && enableMeshDebuging)
+        if (compositeTarget)
         {
             ImGui::Image(compositeTarget.Get(), size);
-        }
-        
-        auto rt = HRay::GetColorTarget(fd);
-        if (rt && !enableMeshDebuging)
-        {
-            ImGui::Image(rt, size);
         }
 
         // transform Gizmo
@@ -503,7 +628,7 @@ void Editor::ViewPortWindow::OnUpdate(HE::Timestep ts)
                     Math::mat4 parentWorldTransform = ctx.selectedEntity.GetParent().GetWorldSpaceTransformMatrix();
                     Math::mat4 entityLocalSpaceTransform = Math::inverse(parentWorldTransform) * entityWorldSpaceTransform;
 
-                    Math::vec3 position, scale, skew;
+                    Math::float3 position, scale, skew;
                     Math::quat quaternion;
                     Math::vec4 perspective;
                     Math::decompose(entityLocalSpaceTransform, scale, quaternion, position, skew, perspective);
@@ -767,29 +892,21 @@ void Editor::ViewPortWindow::OnUpdate(HE::Timestep ts)
                 ImGui::EndChild();
             }
 
-            ImGui::SameLine(0, 2);
-
-            {
-                ImGui::ScopedFont sf(Editor::FontType::Blod, Editor::FontSize::Caption);
-                ImGui::ScopedStyle ss(ImGuiStyleVar_ButtonTextAlign, ImVec2(0.6f, 0.6f));
-                ImVec2 buttonSize = ImVec2(18, 18) * io.FontGlobalScale + style.FramePadding * 2;
-            
-                ImGui::BeginChild("Renderers", { 0, 0 }, ImGuiChildFlags_AutoResizeX | ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_Borders);
-            
-                if (ImGui::SelectableButton(Icon_Camera, buttonSize, !enableMeshDebuging))
-                {
-                    debug.enableMeshNormals = debug.enableMeshTangents = debug.enableMeshBitangents = debug.enableMeshAABB = false;
-                }
-            
-                ImGui::SameLine(0, 1);
-            
-                if (ImGui::SelectableButton(Icon_Bug, buttonSize, enableMeshDebuging))
-                {
-                    debug.enableMeshNormals = debug.enableMeshTangents = debug.enableMeshBitangents = debug.enableMeshAABB = true;
-                }
-            
-                ImGui::EndChild();
-            }
+            // ImGui::SameLine(0, 2);
+            //{
+            //    ImGui::ScopedFont sf(Editor::FontType::Blod, Editor::FontSize::Caption);
+            //    ImGui::ScopedStyle ss(ImGuiStyleVar_ButtonTextAlign, ImVec2(0.6f, 0.6f));
+            //    ImVec2 buttonSize = ImVec2(18, 18) * io.FontGlobalScale + style.FramePadding * 2;
+            //
+            //    ImGui::BeginChild("Renderers", { 0, 0 }, ImGuiChildFlags_AutoResizeX | ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_Borders);
+            //
+            //    if (ImGui::SelectableButton(Icon_Camera, buttonSize, true))
+            //    {
+            //        debug.enableMeshNormals = debug.enableMeshTangents = debug.enableMeshBitangents = debug.enableMeshAABB = false;
+            //    }
+            //
+            //    ImGui::EndChild();
+            //}
             
             Editor::EndChildView();
         }
@@ -806,7 +923,7 @@ void Editor::ViewPortWindow::OnUpdate(HE::Timestep ts)
             {
                 auto transform = Math::inverse(editorCamera->view.view);
 
-                Math::vec3 p, s, skew;
+                Math::float3 p, s, skew;
                 Math::quat quaternion;
                 Math::vec4 perspective;
 
@@ -860,7 +977,7 @@ void Editor::ViewPortWindow::UpdateEditorCameraAnimation(Assets::Scene* scene, A
     if (cameraAnimation.state & Editor::Animation::Animating)
     {
         auto wt = mainCameraEntity.GetWorldSpaceTransformMatrix();
-        Math::vec3 position, scale, skew;
+        Math::float3 position, scale, skew;
         Math::quat quaternion;
         Math::vec4 perspective;
         Math::decompose(wt, scale, quaternion, position, skew, perspective);
@@ -948,7 +1065,7 @@ void Editor::ViewPortWindow::SetOrbitCamera()
 
     orbitCamera->transform = flyCamera->transform;
 
-    Math::vec3 focalPoint = flyCamera->transform.position - flyCamera->transform.GetForward() * 10.0f;
+    Math::float3 focalPoint = flyCamera->transform.position - flyCamera->transform.GetForward() * 10.0f;
     orbitCamera->focalPoint = focalPoint;
     orbitCamera->distance = 10;
 
@@ -966,7 +1083,7 @@ void Editor::ViewPortWindow::FocusCamera()
     if (selectedEntity)
     {
         auto wt = selectedEntity.GetWorldSpaceTransformMatrix();
-        Math::vec3 p, s, skew;
+        Math::float3 p, s, skew;
         Math::quat quaternion;
         Math::vec4 perspective;
         Math::decompose(wt, s, quaternion, p, skew, perspective);
@@ -1578,26 +1695,26 @@ void Editor::InspectorWindow::OnUpdate(HE::Timestep ts)
 
                                 ImField::Separator();
                                 auto baseT = ctx.assetManager.GetAsset<Assets::Texture>(mat->baseTextureHandle);
-                                if (ImField::ImageButton("Bace Texture", baseT ? baseT->texture.Get() : ctx.board.Get(), size)) Editor::Clear();
+                                if (ImField::ImageButton("Bace Texture", baseT ? baseT->texture.Get() : GetIcon(AppIcons::Board), size)) Editor::Clear();
 
                                 TextureHandler(mat, mat->baseTextureHandle);
                                 if (ImField::ColorEdit4("Bace Color", &mat->baseColor.x)) Editor::Clear();
 
                                 ImField::Separator();
                                 auto normalT = ctx.assetManager.GetAsset<Assets::Texture>(mat->normalTextureHandle);
-                                if (ImField::ImageButton("Normal Texture", normalT ? normalT->texture.Get() : ctx.board.Get(), size)) Editor::Clear();
+                                if (ImField::ImageButton("Normal Texture", normalT ? normalT->texture.Get() : GetIcon(AppIcons::Board), size)) Editor::Clear();
                                 TextureHandler(mat, mat->normalTextureHandle);
 
                                 ImField::Separator();
                                 auto metallicRoughnessT = ctx.assetManager.GetAsset<Assets::Texture>(mat->metallicRoughnessTextureHandle);
-                                if (ImField::ImageButton("Metallic Roughness Texture", metallicRoughnessT ? metallicRoughnessT->texture.Get() : ctx.board.Get(), size)) Editor::Clear();
+                                if (ImField::ImageButton("Metallic Roughness Texture", metallicRoughnessT ? metallicRoughnessT->texture.Get() : GetIcon(AppIcons::Board), size)) Editor::Clear();
                                 TextureHandler(mat, mat->metallicRoughnessTextureHandle);
                                 if (ImField::DragFloat("Metallic", &mat->metallic, 0.01f, 0.0f, 1.0f)) Editor::Clear();
                                 if (ImField::DragFloat("Roughness", &mat->roughness, 0.01f, 0.0f, 1.0f)) Editor::Clear();
 
                                 ImField::Separator();
                                 auto emissiveT = ctx.assetManager.GetAsset<Assets::Texture>(mat->emissiveTextureHandle);
-                                if (ImField::ImageButton("Emissive Texture", emissiveT ? emissiveT->texture.Get() : ctx.board.Get(), size)) Editor::Clear();
+                                if (ImField::ImageButton("Emissive Texture", emissiveT ? emissiveT->texture.Get() : GetIcon(AppIcons::Board), size)) Editor::Clear();
                                 TextureHandler(mat, mat->emissiveTextureHandle);
                                 if (ImField::ColorEdit3("Emissive Color", &mat->emissiveColor.x)) Editor::Clear();
                                 if (ImField::DragFloat("Emissive Exposure", &mat->emissiveEV, 0.01f)) Editor::Clear();

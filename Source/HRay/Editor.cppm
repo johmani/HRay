@@ -189,6 +189,7 @@ export namespace Editor {
         {
             PrimaryButton,
             Selected,
+            ViewPortSelected,
 
             TextButtonHovered,
             TextButtonActive,
@@ -234,6 +235,22 @@ export namespace Editor {
             BodySmall = 16,
             Caption = 13,
         };
+    };
+
+    enum class AppIcons
+    {
+        AppIcon,
+        Close,
+        Minimize, 
+        Maximize,
+        Restore,
+        Board,
+
+        Camera,
+        DirectionalLight,
+        EnvLight,
+
+        Count
     };
 
     //////////////////////////////////////////////////////////////////////////
@@ -312,7 +329,8 @@ export namespace Editor {
         App* app;
         nvrhi::DeviceHandle device;
         nvrhi::CommandListHandle commandList;
-        nvrhi::TextureHandle icon, close, min, max, res, board;
+        
+        std::array<nvrhi::TextureHandle, (int)AppIcons::Count> icons;
 
         Assets::AssetManager assetManager;
         Assets::SubscriberHandle assetEventCallbackHandle = 0;
@@ -379,6 +397,7 @@ export namespace Editor {
     Assets::AssetManager& GetAssetManager();
 
     ImVec4 GetColor(int c);
+    nvrhi::ITexture* GetIcon(AppIcons icon);
 
     Assets::Entity GetSceneCamera(Assets::Scene* scene);
    
@@ -567,6 +586,7 @@ export namespace Editor {
         nvrhi::ComputePipelineHandle computePipeline;
         nvrhi::ShaderHandle cs;
         nvrhi::TextureHandle compositeTarget;
+        nvrhi::TextureHandle idTarget;
 
         PixelReadbackPass pixelReadbackPass;
         Math::uvec2 pixelPosition = { 0, 0 };

@@ -228,4 +228,5 @@ export namespace HRay {
     void Clear(FrameData& frameData);
     nvrhi::ITexture* GetColorTarget(FrameData& frameData);
     nvrhi::ITexture* GetDepthTarget(FrameData& frameData);
+    nvrhi::ITexture* GetEntitiesIDTarget(FrameData& frameData);
 }

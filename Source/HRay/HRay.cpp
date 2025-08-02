@@ -741,6 +741,11 @@ nvrhi::ITexture* HRay::GetDepthTarget(FrameData& frameData)
     return frameData.depth;
 }
 
+nvrhi::ITexture* HRay::GetEntitiesIDTarget(FrameData& frameData)
+{
+    return frameData.entitiesID;
+}
+
 void HRay::ReleaseTexture(RendererData& data,  Assets::Texture* texture)
 {
     if (texture->descriptor.IsValid())

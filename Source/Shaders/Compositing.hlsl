@@ -1,11 +1,14 @@
 
 Texture2D uiLayerColor : register(t0);
 Texture2DMS<float> uiLayerDepth : register(t1);
+Texture2DMS<uint> uiLayerID : register(t2);
 
-Texture2D sceneColor : register(t2);
-Texture2D sceneDepth : register(t3);
+Texture2D sceneColor : register(t3);
+Texture2D sceneDepth : register(t4);
+Texture2D<uint> sceneID : register(t5);
 
 RWTexture2D<float4> compositeTarget : register(u0);
+RWTexture2D<uint> idTarget : register(u1);
 
 float4 AlphaBlend(float4 src, float4 dst)
 {
@@ -34,21 +37,22 @@ void Main(uint2 id : SV_DispatchThreadID)
     float4 sceneCol = sceneColor[id];
     float4 uiCol = uiLayerColor[id];
 
-    float sceneD = sceneDepth[id].r;
-    float uiD = ResolveUILayerDepth(id);
-
+    uint entityID;
     float4 fg, bg;
 
-    if (sceneD < uiD)
+    if (sceneDepth[id].r < ResolveUILayerDepth(id))
     {
         fg = sceneCol;
         bg = uiCol;
+        entityID = sceneID[id];
     }
     else
     {
         fg = uiCol;
         bg = sceneCol;
+        entityID = uiLayerID.Load(id, 0);
     }
 
     compositeTarget[id] = AlphaBlend(fg, bg);
+    idTarget[id] = entityID;
 }

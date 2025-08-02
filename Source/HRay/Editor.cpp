@@ -261,15 +261,20 @@ void Editor::App::OnAttach()
     {
         HE_PROFILE_SCOPE("Load Icons");
 
+        std::filesystem::path IconsDir = std::filesystem::current_path() / "Resources" / "Icons";
+
         auto cl = ctx.device->createCommandList({ .enableImmediateExecution = false });
         cl->open();
         {
-            ctx.icon = Assets::LoadTexture(Application::GetApplicationDesc().windowDesc.iconFilePath, ctx.device, cl);
-            ctx.close = Assets::LoadTexture(Buffer(g_icon_close, sizeof(g_icon_close)), ctx.device, cl);
-            ctx.min = Assets::LoadTexture(Buffer(g_icon_minimize, sizeof(g_icon_minimize)), ctx.device, cl);
-            ctx.max = Assets::LoadTexture(Buffer(g_icon_maximize, sizeof(g_icon_maximize)), ctx.device, cl);
-            ctx.res = Assets::LoadTexture(Buffer(g_icon_restore, sizeof(g_icon_restore)), ctx.device, cl);
-            ctx.board = Assets::LoadTexture(Buffer(g_icon_board, sizeof(g_icon_board)), ctx.device, cl);
+            ctx.icons[(int)AppIcons::AppIcon] = Assets::LoadTexture(Application::GetApplicationDesc().windowDesc.iconFilePath, ctx.device, cl);
+            ctx.icons[(int)AppIcons::Close] = Assets::LoadTexture(Buffer(g_icon_close, sizeof(g_icon_close)), ctx.device, cl);
+            ctx.icons[(int)AppIcons::Minimize] = Assets::LoadTexture(Buffer(g_icon_minimize, sizeof(g_icon_minimize)), ctx.device, cl);
+            ctx.icons[(int)AppIcons::Maximize] = Assets::LoadTexture(Buffer(g_icon_maximize, sizeof(g_icon_maximize)), ctx.device, cl);
+            ctx.icons[(int)AppIcons::Restore] = Assets::LoadTexture(Buffer(g_icon_restore, sizeof(g_icon_restore)), ctx.device, cl);
+            ctx.icons[(int)AppIcons::Board] = Assets::LoadTexture(Buffer(g_icon_board, sizeof(g_icon_board)), ctx.device, cl);
+            ctx.icons[(int)AppIcons::Camera] = Assets::LoadTexture(IconsDir / "Camera.png", ctx.device, cl);
+            ctx.icons[(int)AppIcons::DirectionalLight] = Assets::LoadTexture(IconsDir / "Directional_Light.png", ctx.device, cl);
+            ctx.icons[(int)AppIcons::EnvLight] = Assets::LoadTexture(IconsDir / "EnvLight.png", ctx.device, cl);
         }
         cl->close();
         ctx.device->executeCommandList(cl);
@@ -295,6 +300,7 @@ void Editor::App::OnAttach()
         ctx.colors[Color::Error] = { 0.8f, 0.3f, 0.2f, 1.0f };
         ctx.colors[Color::ChildBlock] = { 0.1f,0.1f ,0.1f ,1.0f };
         ctx.colors[Color::Selected] = { 0.3f, 0.3f, 0.3f , 1.0f };
+        ctx.colors[Color::ViewPortSelected] = { 0.9f, 0.8f , 0.2f , 1.0f };
 
         ctx.colors[Color::Mesh] = { 0.1f, 0.7f, 9.0f, 1.0f };
         ctx.colors[Color::Transform] = { 0.9f, 0.7f, 0.1f, 1.0f };
@@ -653,7 +659,7 @@ void Editor::App::OnUpdate(const FrameInfo& info)
         if (ctx.enableTitlebar)
         {
             bool customTitlebar = Application::GetApplicationDesc().windowDesc.customTitlebar;
-            bool isIconClicked = Editor::BeginMainMenuBar(customTitlebar, ctx.icon.Get(), ctx.close.Get(), ctx.min.Get(), ctx.max.Get(), ctx.res.Get());
+            bool isIconClicked = Editor::BeginMainMenuBar(customTitlebar, GetIcon(AppIcons::AppIcon), GetIcon(AppIcons::Close), GetIcon(AppIcons::Minimize), GetIcon(AppIcons::Maximize), GetIcon(AppIcons::Restore));
 
             {
                 ImGui::SetNextWindowPos(ImGui::GetCurrentContext()->CurrentWindow->Pos + ImVec2(0, ImGui::GetCurrentContext()->CurrentWindow->Size.y));
@@ -951,6 +957,8 @@ Editor::Context& Editor::GetContext() { return *App::s_Context; }
 Assets::AssetManager& Editor::GetAssetManager() { return GetContext().assetManager; }
 
 ImVec4 Editor::GetColor(int c) { return Editor::GetContext().colors[c]; }
+
+nvrhi::ITexture* Editor::GetIcon(Editor::AppIcons icon) { return Editor::GetContext().icons[(int)icon]; }
 
 Assets::Entity Editor::GetSceneCamera(Assets::Scene* scene)
 {
