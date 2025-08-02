@@ -127,6 +127,7 @@ export namespace HRay {
 
     struct InstanceData
     {
+        uint32_t id;
         Math::uint firstGeometryIndex;
         Math::float4x4 transform;
     };
@@ -183,6 +184,7 @@ export namespace HRay {
         nvrhi::TextureHandle HDRColor;
         nvrhi::TextureHandle LDRColor;
         nvrhi::TextureHandle depth;
+        nvrhi::TextureHandle entitiesID;
 
         nvrhi::BufferHandle instanceBuffer;
         nvrhi::BufferHandle geometryBuffer;
@@ -218,7 +220,7 @@ export namespace HRay {
     void Init(RendererData& data, nvrhi::DeviceHandle pDevice, nvrhi::CommandListHandle commandList);
     void BeginScene(RendererData& data, FrameData& frameData);
     void EndScene(RendererData& data, FrameData& frameData, nvrhi::ICommandList* commandList, const ViewDesc& viewDesc);
-    void SubmitMesh(RendererData& data, FrameData& frameData, Assets::Asset asset, Assets::Mesh& mesh, Math::float4x4 wt, nvrhi::ICommandList* cl);
+    void SubmitMesh(RendererData& data, FrameData& frameData, Assets::Asset asset, Assets::Mesh& mesh, Math::float4x4 wt, uint32_t id, nvrhi::ICommandList* cl);
     void SubmitMaterial(RendererData& data, FrameData& frameData, Assets::Asset materailAsset);
     void SubmitDirectionalLight(RendererData& data, FrameData& frameData, const Assets::DirectionalLightComponent& light, Math::float4x4 wt);
     void SubmitSkyLight(RendererData& data, FrameData& frameData, const Assets::DynamicSkyLightComponent& light);

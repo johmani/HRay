@@ -288,6 +288,24 @@ export namespace Editor {
         Math::quat   endRotation;
     };
 
+    struct PixelReadbackPass
+    {
+        void Init(nvrhi::IDevice* device);
+        ~PixelReadbackPass();
+        void Capture(nvrhi::ICommandList* commandList, nvrhi::ITexture* inputTexture, Math::uvec2 pixelPosition);
+        uint32_t ReadUInt();
+
+        nvrhi::DeviceHandle device;
+        nvrhi::ShaderHandle cs;
+        nvrhi::ComputePipelineHandle pipeline;
+        nvrhi::BindingLayoutHandle bindingLayout;
+        nvrhi::BindingSetHandle bindingSet;
+        nvrhi::BufferHandle constantBuffer;
+        nvrhi::BufferHandle intermediateBuffer;
+        nvrhi::BufferHandle readbackBuffer;
+        void* mapedBuffer = nullptr;
+    };
+
     struct App;
     struct Context
     {
@@ -550,8 +568,15 @@ export namespace Editor {
         nvrhi::ShaderHandle cs;
         nvrhi::TextureHandle compositeTarget;
 
+        PixelReadbackPass pixelReadbackPass;
+        Math::uvec2 pixelPosition = { 0, 0 };
+        uint32_t selected = -1;
+
+        Assets::Entity GetHoveredEntity();
+
         void OnCreate() override;
         void OnUpdate(HE::Timestep ts) override;
+        void OnEnd(HE::Timestep ts) override;
         void Serialize(std::ostringstream& out) override;
         void Deserialize(simdjson::dom::element element) override;
 

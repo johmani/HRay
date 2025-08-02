@@ -38,6 +38,7 @@ static void CreateOrResizeRenderTarget(Editor::ViewPortWindow* viewPortWindow, n
     viewPortWindow->compositeTarget = ctx.device->createTexture(desc);
 
     viewPortWindow->compositeBindingSet.Reset();
+    viewPortWindow->pixelReadbackPass.bindingSet.Reset();
 }
 
 void Editor::ViewPortWindow::OnCreate()
@@ -141,13 +142,18 @@ void Editor::ViewPortWindow::OnUpdate(HE::Timestep ts)
 
             HRay::BeginScene(ctx.rd, fd);
 
+            if (!pixelReadbackPass.device)
+                pixelReadbackPass.Init(ctx.device);
+
+            {
+                auto format = HRay::GetColorTarget(fd)->getDesc().format;
+                if (!compositeTarget)
+                    CreateOrResizeRenderTarget(this, format, width, height);
+            }
+
             if (enableMeshDebuging)
             {
                 auto format = HRay::GetColorTarget(fd)->getDesc().format;
-
-                if (!compositeTarget)
-                    CreateOrResizeRenderTarget(this, format, width, height);
-
                 Tiny2D::BeginScene(
                     tiny2DView,
                     ctx.commandList,
@@ -185,7 +191,7 @@ void Editor::ViewPortWindow::OnUpdate(HE::Timestep ts)
                         auto& meshSource = asset.Get<Assets::MeshSource>();
                         auto& mesh = meshSource.meshes[dm.meshIndex];
 
-                        HRay::SubmitMesh(ctx.rd, fd, asset, mesh, wt, ctx.commandList);
+                        HRay::SubmitMesh(ctx.rd, fd, asset, mesh, wt, (uint32_t)e, ctx.commandList);
 
                         if (debug.enableMeshAABB)
                         {
@@ -290,16 +296,18 @@ void Editor::ViewPortWindow::OnUpdate(HE::Timestep ts)
 
             HRay::EndScene(ctx.rd, fd, ctx.commandList, { viewMatrix, projection, camPos, fov, (uint32_t)width, (uint32_t)height });
 
-            if (enableMeshDebuging)
             {
-                Tiny2D::EndScene();
-
                 HE_ASSERT(compositeTarget);
                 if ((width > 0 && height > 0) && (width != compositeTarget->getDesc().width || height != compositeTarget->getDesc().height))
                 {
                     auto format = HRay::GetColorTarget(fd)->getDesc().format;
                     CreateOrResizeRenderTarget(this, format, width, height);
                 }
+            }
+
+            if (enableMeshDebuging)
+            {
+                Tiny2D::EndScene();
 
                 if (!compositeBindingSet)
                 {
@@ -324,6 +332,7 @@ void Editor::ViewPortWindow::OnUpdate(HE::Timestep ts)
                 ctx.commandList->dispatch(width / 8, height / 8);
             }
 
+            pixelReadbackPass.Capture(ctx.commandList, fd.entitiesID, pixelPosition);
 
             if (cameraPrevPos != editorCamera->transform.position || cameraPrevRot != editorCamera->transform.rotation)
             {
@@ -505,6 +514,12 @@ void Editor::ViewPortWindow::OnUpdate(HE::Timestep ts)
 
                     clearReq |= true;
                 }
+            }
+
+            auto hoveredEntity = GetHoveredEntity();
+            if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !ImGuizmo::IsUsing())
+            {
+                ctx.selectedEntity = hoveredEntity;
             }
         }
 
@@ -830,6 +845,11 @@ void Editor::ViewPortWindow::OnUpdate(HE::Timestep ts)
     }
 }
 
+void Editor::ViewPortWindow::OnEnd(HE::Timestep ts) 
+{
+    selected = pixelReadbackPass.ReadUInt();
+}
+
 void Editor::ViewPortWindow::UpdateEditorCameraAnimation(Assets::Scene* scene, Assets::Entity mainCameraEntity, float ts)
 {
     HE_ASSERT(scene);
@@ -988,6 +1008,28 @@ void Editor::ViewPortWindow::SetRendererToEditorCameraProp(HRay::FrameData& fram
     frameData.sceneInfo.view.apertureRadius = 0;
     frameData.sceneInfo.view.focusFalloff = 0;
     frameData.sceneInfo.view.focusDistance = 10;
+}
+
+Assets::Entity Editor::ViewPortWindow::GetHoveredEntity()
+{
+    auto& ctx = GetContext();
+    Assets::Scene* scene = ctx.assetManager.GetAsset<Assets::Scene>(ctx.sceneHandle);
+
+    auto [mx, my] = ImGui::GetMousePos();
+    mx -= viewportBounds[0].x;
+    my -= viewportBounds[0].y;
+    Math::vec2 viewportSize = viewportBounds[1] - viewportBounds[0];
+
+    int mouseX = (int)mx;
+    int mouseY = (int)my;
+
+    if (mouseX >= 0 && mouseY >= 0 && mouseX < (int)viewportSize.x && mouseY < (int)viewportSize.y)
+    {
+        pixelPosition = { mouseX, mouseY };
+        return { (entt::entity)selected, scene };
+    }
+
+    return {};
 }
 
 void Editor::ViewPortWindow::Serialize(std::ostringstream& out)
