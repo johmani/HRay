@@ -520,6 +520,7 @@ export namespace Editor {
         } debug;
 
         bool openMeshDebuggingOverlay = false;
+        bool openViewOverlay = false;
         
         HE::Ref<OrbitCamera> orbitCamera;
         HE::Ref<FlyCamera> flyCamera;
