@@ -2,12 +2,10 @@
 
 #if NVRHI_HAS_D3D12
 #include "Embeded/dxil/Main.bin.h"
-#include "Embeded/dxil/PostProcessing_Main.bin.h"
 #endif
 
 #if NVRHI_HAS_VULKAN
 #include "Embeded/spirv/Main.bin.h"
-#include "Embeded/spirv/PostProcessing_Main.bin.h"
 #endif
 
 import HRay;
@@ -223,14 +221,6 @@ void HRay::Init(RendererData& data, nvrhi::DeviceHandle pDevice, nvrhi::CommandL
         data.descriptorTable = HE::CreateRef<Assets::DescriptorTableManager>(data.device, data.bindlessLayout);
     }
 
-    {
-        HE_PROFILE_SCOPE("Create PostProssingInfo Buffer");
-
-        data.postProssingInfoBuffer = data.device->createBuffer(nvrhi::utils::CreateVolatileConstantBufferDesc(sizeof(PostProssingInfo), "postProssingInfoBuffer", sizeof(PostProssingInfo)));
-        HE_VERIFY(data.postProssingInfoBuffer);
-    }
-
-
     // Shaders
     {
         {
@@ -239,11 +229,6 @@ void HRay::Init(RendererData& data, nvrhi::DeviceHandle pDevice, nvrhi::CommandL
             data.shaderLibrary = HE::RHI::CreateShaderLibrary(data.device, STATIC_SHADER(Main), nullptr);
             HE_VERIFY(data.shaderLibrary);
         }
-
-        nvrhi::ShaderDesc desc;
-        desc.shaderType = nvrhi::ShaderType::Compute;
-        desc.entryName = "Main";
-        data.cs = HE::RHI::CreateStaticShader(data.device, STATIC_SHADER(PostProcessing_Main), nullptr, desc);
     }
 
     // Samplers
@@ -277,28 +262,11 @@ void HRay::Init(RendererData& data, nvrhi::DeviceHandle pDevice, nvrhi::CommandL
            nvrhi::BindingLayoutItem::Texture_UAV(2),
            nvrhi::BindingLayoutItem::Texture_UAV(3),
            nvrhi::BindingLayoutItem::Sampler(0),
-           nvrhi::BindingLayoutItem::VolatileConstantBuffer(0),
-           nvrhi::BindingLayoutItem::VolatileConstantBuffer(1)
+           nvrhi::BindingLayoutItem::VolatileConstantBuffer(0)
         };
 
         data.bindingLayout = data.device->createBindingLayout(desc);
         HE_ASSERT(data.bindingLayout);
-    }
-
-    // PostProcessing Binding Layout
-    {
-        HE_PROFILE_SCOPE("createBindingLayout");
-
-        nvrhi::BindingLayoutDesc desc;
-        desc.visibility = nvrhi::ShaderType::All;
-        desc.bindings = {
-           nvrhi::BindingLayoutItem::Texture_UAV(0),
-           nvrhi::BindingLayoutItem::Texture_UAV(1),
-           nvrhi::BindingLayoutItem::VolatileConstantBuffer(0)
-        };
-
-        data.postProcessingBindingLayout = data.device->createBindingLayout(desc);
-        HE_ASSERT(data.postProcessingBindingLayout);
     }
 
     // Pipeline
@@ -329,12 +297,6 @@ void HRay::Init(RendererData& data, nvrhi::DeviceHandle pDevice, nvrhi::CommandL
         data.shaderTable->setRayGenerationShader("RayGen");
         data.shaderTable->addMissShader("Miss");
         data.shaderTable->addHitGroup("HitGroup");
-    }
-
-    // Compute
-    {
-        data.computePipeline = data.device->createComputePipeline({ data.cs, { data.postProcessingBindingLayout } }); 
-        HE_VERIFY(data.computePipeline);
     }
 }
 
@@ -420,8 +382,6 @@ void HRay::EndScene(RendererData& data, FrameData& frameData, nvrhi::ICommandLis
         commandList->writeBuffer(frameData.sceneInfoBuffer, &frameData.sceneInfo, sizeof(SceneInfo));
     }
 
-    commandList->writeBuffer(data.postProssingInfoBuffer, &data.postProssingInfo, sizeof(PostProssingInfo));
-
     if ((viewDesc.width > 0 && viewDesc.height > 0) && (viewDesc.width != frameData.HDRColor->getDesc().width || viewDesc.height != frameData.HDRColor->getDesc().height))
         CreateOrResizeRenderTarget(data, frameData, viewDesc.width, viewDesc.height);
 
@@ -453,23 +413,9 @@ void HRay::EndScene(RendererData& data, FrameData& frameData, nvrhi::ICommandLis
                 nvrhi::BindingSetItem::Texture_UAV(3, frameData.depth),
                 nvrhi::BindingSetItem::Sampler(0, data.anisotropicWrapSampler),
                 nvrhi::BindingSetItem::ConstantBuffer(0, frameData.sceneInfoBuffer),
-                nvrhi::BindingSetItem::ConstantBuffer(1, data.postProssingInfoBuffer)
             };
 
             frameData.bindingSet = data.device->createBindingSet(bindingSetDesc, data.bindingLayout);
-        }
-
-        {
-            HE_ASSERT(data.postProssingInfoBuffer);
-
-            nvrhi::BindingSetDesc bindingSetDesc;
-            bindingSetDesc.bindings = {
-                nvrhi::BindingSetItem::Texture_UAV(0, frameData.HDRColor),
-                nvrhi::BindingSetItem::Texture_UAV(1, frameData.LDRColor),
-                nvrhi::BindingSetItem::ConstantBuffer(0, data.postProssingInfoBuffer)
-            };
-
-            data.postProcessingBindingSet = data.device->createBindingSet(bindingSetDesc, data.postProcessingBindingLayout);
         }
     }
 
@@ -491,12 +437,6 @@ void HRay::EndScene(RendererData& data, FrameData& frameData, nvrhi::ICommandLis
     args.height = viewDesc.height;
     commandList->dispatchRays(args);
 
-    if (frameData.enablePostProcessing)
-    {
-        commandList->setComputeState({ data.computePipeline , { data.postProcessingBindingSet } });
-        commandList->dispatch(viewDesc.width / 8, viewDesc.height / 8);
-    }
-    
     frameData.frameIndex += frameData.sceneInfo.settings.maxSamples;
     frameData.time = HE::Application::GetTime() - frameData.lastTime;
 }

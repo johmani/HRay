@@ -15,6 +15,24 @@ export namespace HRay {
     constexpr uint32_t c_instanceMaskOpaque = 1;
     constexpr uint32_t c_Invalid = ~0u;
 
+    enum class TonMapingType : int
+    {
+        None,
+        WhatEver,
+        ACES,
+        ACESFitted,
+        Filmic,
+        Reinhard
+    };
+
+    enum class RenderingMode : int
+    {
+        PathTracing,
+        Normals,
+        Tangent,
+        Bitangent
+    };
+
     struct SceneInfo
     {
         struct View
@@ -75,27 +93,19 @@ export namespace HRay {
         {
             int maxLighteBounces = 8;
             int maxSamples = 1;
-            Math::float2 padding0;
+            RenderingMode renderingMode;
+            int padding0;
            
         } settings;
-    };
 
-    enum class TonMapingType : int
-    {
-        None,
-        WhatEver,
-        ACES,
-        ACESFitted,
-        Filmic,
-        Reinhard
-    };
+        struct PostProssing
+        {
+            float exposure = 1.0f;
+            float gamma = 2.2f;
+            TonMapingType tonMappingType;
+            int padding;
 
-    struct PostProssingInfo
-    {
-        float exposure = 1.0f;
-        float gamma = 2.2f;
-
-        TonMapingType tonMappingType;
+        } postProssing;
     };
 
     struct GeometryData
@@ -160,15 +170,8 @@ export namespace HRay {
         nvrhi::rt::ShaderTableHandle shaderTable;
         HE::Ref<Assets::DescriptorTableManager> descriptorTable;
         nvrhi::BindingLayoutHandle bindlessLayout;
-        nvrhi::BindingLayoutHandle postProcessingBindingLayout;
-        nvrhi::BindingSetHandle postProcessingBindingSet;
-        nvrhi::ComputePipelineHandle computePipeline;
-        nvrhi::ShaderHandle cs;
-
+       
         uint32_t textureCount = 0;
-
-        nvrhi::BufferHandle postProssingInfoBuffer;
-        PostProssingInfo postProssingInfo;
     };
 
     struct FrameData
@@ -201,7 +204,6 @@ export namespace HRay {
         uint32_t geometryCount = 0;
         uint32_t instanceCount = 0;
         uint32_t materialCount = 0;
-        bool enablePostProcessing = false;
     };
 
     struct ViewDesc

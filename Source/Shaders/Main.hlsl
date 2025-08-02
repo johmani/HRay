@@ -55,10 +55,19 @@ struct SceneInfo
     {
         int maxLighteBounces;
         int maxSamples;
-        float gamma;
+        int renderingMode;
         int padding0;
 
     } settings;
+
+    struct PostProssing
+    {
+        float exposure;
+        float gamma;
+        int tonMappingType;
+        int padding0;
+
+    } postProssing;
 };
 
 struct GeometryData
@@ -113,13 +122,6 @@ struct DirectionalLightData
     float haloFalloff;
 };
 
-struct PostProssingInfo
-{
-    float exposure;
-    float gamma;
-    int tonMappingType;
-};
-
 VK_BINDING(0, 1) ByteAddressBuffer bindlessBuffers[] : register(t0, space1);
 VK_BINDING(1, 1) Texture2D bindlessTextures[] : register(t0, space2);
 
@@ -130,7 +132,6 @@ StructuredBuffer<Material> materialData : register(t3);
 StructuredBuffer<DirectionalLightData> directionalLightData : register(t4);
 
 ConstantBuffer<SceneInfo> sceneInfoBuffer : register(b0);
-ConstantBuffer<PostProssingInfo> postProssingInfo : register(b1);
 
 SamplerState materialSampler : register(s0);
 
@@ -367,6 +368,27 @@ void RayGen()
 
             if (payload.HasHit())
             {
+                if (bounce == 0)
+                {
+                    depthValue = ComputeDepth(rayOrigin, sceneInfoBuffer.view.front, hitPoint, near, far);
+                }
+
+                if (sceneInfoBuffer.settings.renderingMode == c_RenderingMode_Normals)
+                {
+                    radiance = payload.normal;
+                    break;
+                }
+                else if (sceneInfoBuffer.settings.renderingMode == c_RenderingMode_Tangent)
+                {
+                    radiance = payload.tangent;
+                    break;
+                }
+                else if (sceneInfoBuffer.settings.renderingMode == c_RenderingMode_Bitangent)
+                {
+                    radiance = payload.bitangent;
+                    break;
+                }
+
                 radiance += payload.emissive * throughput;
                 throughput *= payload.baseColor.rgb;
 
@@ -411,17 +433,17 @@ void RayGen()
     {
         float3 color = HDRColor[rayIndex].rgb;
     
-        switch (postProssingInfo.tonMappingType)
+        switch (sceneInfoBuffer.postProssing.tonMappingType)
         {
         case c_TonMapingType_None:                                                            break;
         case c_TonMapingType_WhatEver:   color = Tonemap(color, 1.5);                         break;
         case c_TonMapingType_ACES:       color = ACES(color);                                 break;
         case c_TonMapingType_ACESFitted: color = ACESFitted(color);                           break;
-        case c_TonMapingType_Filmic:     color = Filmic(color, postProssingInfo.exposure);    break;
-        case c_TonMapingType_Reinhard:   color = Reinhard(color, postProssingInfo.exposure);  break;
+        case c_TonMapingType_Filmic:     color = Filmic(color, sceneInfoBuffer.postProssing.exposure);    break;
+        case c_TonMapingType_Reinhard:   color = Reinhard(color, sceneInfoBuffer.postProssing.exposure);  break;
         }
         
-        color = color = pow(color, 1 / postProssingInfo.gamma);
+        color = color = pow(color, 1 / sceneInfoBuffer.postProssing.gamma);
         LDRColor[rayIndex] = float4(color, 1);
     }
 }
