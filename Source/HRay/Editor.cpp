@@ -1136,6 +1136,32 @@ void Editor::OpenProject(const std::filesystem::path& file)
     ctx.assetEventCallbackHandle = Editor::GetAssetManager().Subscribe(Editor::GetContext().app);
     Editor::GetAssetManager().Deserialize();
 
+    for (auto entry : std::filesystem::recursive_directory_iterator(ctx.project.assetsDir))
+    {
+        auto& currentPath = entry.path();
+        bool isDirectory = entry.is_directory();
+        auto name = currentPath.filename().string();
+
+        if (!isDirectory)
+        {
+            auto relative = std::filesystem::relative(currentPath, ctx.project.assetsDir);
+
+            auto handle = Editor::GetAssetManager().GetAssetHandleFromFilePath(relative);
+            if (!handle)
+            {
+                auto newAssetHandle = Editor::GetAssetManager().ImportAsset(relative, false);
+            }
+        }
+    }
+
+    for (auto& [path, handle] : Editor::GetAssetManager().pathToHandleMap)
+    {
+        if (!std::filesystem::exists(ctx.project.assetsDir / path))
+        {
+            Editor::GetAssetManager().RemoveAsset(handle);
+        }
+    }
+
     Editor::Deserialize();
 }
 
