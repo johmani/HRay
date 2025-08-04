@@ -417,6 +417,7 @@ export namespace Editor {
     void Clear();
 
     Assets::Entity GetSelectedEntity();
+    void SelectEntity(Assets::Entity entity);
     Assets::Scene* GetScene();
 
     void Save(nvrhi::IDevice* device, nvrhi::ITexture* texture, const std::string& directory, uint32_t frameIndex);

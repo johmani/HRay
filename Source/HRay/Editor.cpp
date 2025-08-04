@@ -1017,7 +1017,7 @@ void Editor::Animate()
     ctx.sceneHandle = handle;
     ctx.sampleCount = 0;
     ctx.frameIndex = 0;
-    ctx.selectedEntity = {};
+    Editor::SelectEntity({});
 
     Editor::Clear();
     ctx.sceneMode = SceneMode::Runtime;
@@ -1066,7 +1066,7 @@ void Editor::Stop()
     ctx.sceneHandle = ctx.tempSceneHandle;
     ctx.sampleCount = 0;
     ctx.frameIndex = 0;
-    ctx.selectedEntity = {};
+    Editor::SelectEntity({});
     Editor::Clear();
 
     // SceneCallback
@@ -1112,7 +1112,7 @@ void Editor::OpenProject(const std::filesystem::path& file)
         if (ctx.sceneMode == SceneMode::Runtime)
             Stop();
 
-        ctx.selectedEntity = {};
+        Editor::SelectEntity({});
 
         if (!ctx.project.projectFilePath.empty())
             Editor::Serialize();
@@ -1173,7 +1173,7 @@ void Editor::CreateNewProject(const std::filesystem::path& path, std::string pro
         if (ctx.sceneMode == SceneMode::Runtime)
             Stop();
 
-        ctx.selectedEntity = {};
+        Editor::SelectEntity({});
 
         if (!ctx.project.projectFilePath.empty())
             Editor::Serialize();
@@ -1278,6 +1278,7 @@ void Editor::Clear()
 }
 
 Assets::Entity Editor::GetSelectedEntity() { return Editor::GetContext().selectedEntity; }
+void Editor::SelectEntity(Assets::Entity entity) { Editor::GetContext().selectedEntity = entity; }
 
 Assets::Scene* Editor::GetScene()
 {

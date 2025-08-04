@@ -521,9 +521,16 @@ void Editor::ViewPortWindow::OnUpdate(HE::Timestep ts)
             else
                 Preview();
         }
+
+        auto hoveredEntity = GetHoveredEntity();
+        if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !ImGuizmo::IsUsing())
+        {
+            Editor::SelectEntity(hoveredEntity);
+        }
     }
 
     {
+        auto selectedEntity = GetSelectedEntity();
         bool isWindowFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows);
         auto viewportMinRegion = ImGui::GetCursorScreenPos();
         auto viewportMaxRegion = ImGui::GetCursorScreenPos() + ImGui::GetContentRegionAvail();
@@ -591,7 +598,7 @@ void Editor::ViewPortWindow::OnUpdate(HE::Timestep ts)
             viewportBounds[0] = { viewportMinRegion.x , viewportMinRegion.y };
             viewportBounds[1] = { viewportMaxRegion.x , viewportMaxRegion.y };
 
-            if (ctx.selectedEntity && gizmoType != -1)
+            if (selectedEntity && gizmoType != -1)
             {
                 ImGuizmo::SetDrawlist();
                 ImGuizmo::SetRect(
@@ -604,8 +611,8 @@ void Editor::ViewPortWindow::OnUpdate(HE::Timestep ts)
                 const Math::mat4& cameraProjection = editorCamera->view.projection;
                 Math::float4x4 cameraView = editorCamera->view.view;
 
-                auto& tc = ctx.selectedEntity.GetComponent<Assets::TransformComponent>();
-                Math::float4x4 entityWorldSpaceTransform = ctx.selectedEntity.GetWorldSpaceTransformMatrix();
+                auto& tc = selectedEntity.GetComponent<Assets::TransformComponent>();
+                Math::float4x4 entityWorldSpaceTransform = selectedEntity.GetWorldSpaceTransformMatrix();
 
                 bool snap = ImGui::IsKeyDown(ImGuiKey_LeftCtrl);
                 float snapValue = 0.5f;
@@ -627,7 +634,7 @@ void Editor::ViewPortWindow::OnUpdate(HE::Timestep ts)
 
                 if (ImGuizmo::IsUsing())
                 {
-                    Math::mat4 parentWorldTransform = ctx.selectedEntity.GetParent().GetWorldSpaceTransformMatrix();
+                    Math::mat4 parentWorldTransform = selectedEntity.GetParent().GetWorldSpaceTransformMatrix();
                     Math::mat4 entityLocalSpaceTransform = Math::inverse(parentWorldTransform) * entityWorldSpaceTransform;
 
                     Math::float3 position, scale, skew;
@@ -641,12 +648,6 @@ void Editor::ViewPortWindow::OnUpdate(HE::Timestep ts)
 
                     clearReq |= true;
                 }
-            }
-
-            auto hoveredEntity = GetHoveredEntity();
-            if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !ImGuizmo::IsUsing())
-            {
-                ctx.selectedEntity = hoveredEntity;
             }
         }
 
@@ -1433,7 +1434,7 @@ void Editor::HierarchyWindow::DrawHierarchy(Assets::Entity parent, Assets::Scene
 
         auto& nc = childEntity.GetComponent<Assets::NameComponent>();
 
-        bool isSelected = ctx.selectedEntity == childEntity;
+        bool isSelected = Editor::GetSelectedEntity() == childEntity;
 
         ImGui::PushID((int)childID);
 
@@ -1443,12 +1444,12 @@ void Editor::HierarchyWindow::DrawHierarchy(Assets::Entity parent, Assets::Scene
 
         bool open = ImGui::TreeNodeEx(nc.name.c_str(), node_flags, "%s  %s", Icon_DICE, nc.name.c_str());
         if (ImGui::IsItemClicked())
-            ctx.selectedEntity = childEntity;
+            Editor::SelectEntity(childEntity);
 
         if (childEntity && ImGui::IsItemFocused() && ImGui::IsKeyDown(ImGuiKey::ImGuiKey_Delete))
         {
             Assets::Scene* scene = ctx.assetManager.GetAsset<Assets::Scene>(ctx.sceneHandle);
-            if (scene) scene->DestroyEntity(ctx.selectedEntity);
+            if (scene) scene->DestroyEntity(Editor::GetSelectedEntity());
             Editor::Clear();
         }
 
@@ -1510,7 +1511,8 @@ void Editor::InspectorWindow::OnUpdate(HE::Timestep ts)
     ImGui::ScopedStyle wp(ImGuiStyleVar_WindowPadding, ImVec2(4, 4));
     ImGui::ScopedStyle is(ImGuiStyleVar_ItemSpacing, ImVec2(4, 2));
 
-    if (ctx.selectedEntity)
+    auto selectedEntity = Editor::GetSelectedEntity();
+    if (selectedEntity)
     {
         auto cf = ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding;
 
@@ -1521,7 +1523,7 @@ void Editor::InspectorWindow::OnUpdate(HE::Timestep ts)
             ImGui::ScopedStyle fp(ImGuiStyleVar_FramePadding, ImVec2(4, 4));
             ImGui::BeginChild("Name Component", { 0,0 }, cf);
 
-            auto& nc = ctx.selectedEntity.GetComponent<Assets::NameComponent>();
+            auto& nc = selectedEntity.GetComponent<Assets::NameComponent>();
             const float c_FLT_MIN = 1.175494351e-38F;
             ImGui::SetNextItemWidth(-c_FLT_MIN);
             ImGui::InputText("##Name", &nc.name, ImGuiInputTextFlags_AutoSelectAll | ImGuiInputTextFlags_EnterReturnsTrue);
@@ -1537,7 +1539,7 @@ void Editor::InspectorWindow::OnUpdate(HE::Timestep ts)
             {
                 if (ImGui::BeginTable("Transform", 2, ImGuiTableFlags_SizingFixedFit))
                 {
-                    auto& tc = ctx.selectedEntity.GetComponent<Assets::TransformComponent>();
+                    auto& tc = selectedEntity.GetComponent<Assets::TransformComponent>();
 
                     ImFieldDrageScalerEvent p = ImField::DragColoredFloat3("Position", &tc.position.x, 0.01f);
                     switch (p)
@@ -1577,11 +1579,11 @@ void Editor::InspectorWindow::OnUpdate(HE::Timestep ts)
             ImField::EndBlock();
         }
 
-        if (ctx.selectedEntity.HasComponent<Assets::CameraComponent>())
+        if (selectedEntity.HasComponent<Assets::CameraComponent>())
         {
             if (ImField::BeginBlock("Camera", Icon_Camera, ctx.colors[Color::Camera]))
             {
-                auto& c = ctx.selectedEntity.GetComponent<Assets::CameraComponent>();
+                auto& c = selectedEntity.GetComponent<Assets::CameraComponent>();
 
                 if (ImGui::BeginTable("Camera", 2, ImGuiTableFlags_SizingFixedFit))
                 {
@@ -1628,11 +1630,11 @@ void Editor::InspectorWindow::OnUpdate(HE::Timestep ts)
             ImField::EndBlock();
         }
 
-        if (ctx.selectedEntity.HasComponent<Assets::MeshComponent>())
+        if (selectedEntity.HasComponent<Assets::MeshComponent>())
         {
             if (ImField::BeginBlock("Mesh", Icon_Mesh, ctx.colors[Color::Mesh]))
             {
-                auto& dm = ctx.selectedEntity.GetComponent<Assets::MeshComponent>();
+                auto& dm = selectedEntity.GetComponent<Assets::MeshComponent>();
                 auto ms = ctx.assetManager.GetAsset<Assets::MeshSource>(dm.meshSourceHandle);
                 auto& meta = ctx.assetManager.GetMetadata(dm.meshSourceHandle);
 
@@ -1676,7 +1678,7 @@ void Editor::InspectorWindow::OnUpdate(HE::Timestep ts)
 
             if (ImField::BeginBlock("Material", Icon_Palette, ctx.colors[Color::Material]))
             {
-                auto& dm = ctx.selectedEntity.GetComponent<Assets::MeshComponent>();
+                auto& dm = selectedEntity.GetComponent<Assets::MeshComponent>();
                 auto ms = ctx.assetManager.GetAsset<Assets::MeshSource>(dm.meshSourceHandle);
                 if (ms && dm.meshIndex < ms->meshes.size())
                 {
@@ -1753,11 +1755,11 @@ void Editor::InspectorWindow::OnUpdate(HE::Timestep ts)
             ImField::EndBlock();
         }
 
-        if (ctx.selectedEntity.HasComponent<Assets::DirectionalLightComponent>())
+        if (selectedEntity.HasComponent<Assets::DirectionalLightComponent>())
         {
             if (ImField::BeginBlock("Directional Light", Icon_Sun, ctx.colors[Color::Light]))
             {
-                auto& c = ctx.selectedEntity.GetComponent<Assets::DirectionalLightComponent>();
+                auto& c = selectedEntity.GetComponent<Assets::DirectionalLightComponent>();
 
                 if (ImGui::BeginTable("Directional Light", 2, ImGuiTableFlags_SizingFixedFit))
                 {
@@ -1773,11 +1775,11 @@ void Editor::InspectorWindow::OnUpdate(HE::Timestep ts)
             ImField::EndBlock();
         }
 
-        if (ctx.selectedEntity.HasComponent<Assets::SkyLightComponent>())
+        if (selectedEntity.HasComponent<Assets::SkyLightComponent>())
         {
             if (ImField::BeginBlock("Sky Light", Icon_Sun, ctx.colors[Color::Light]))
             {
-                auto& c = ctx.selectedEntity.GetComponent<Assets::SkyLightComponent>();
+                auto& c = selectedEntity.GetComponent<Assets::SkyLightComponent>();
 
                 if (ImGui::BeginTable("Sky Light Table", 2, ImGuiTableFlags_SizingFixedFit))
                 {
@@ -1800,7 +1802,7 @@ void Editor::InspectorWindow::OnUpdate(HE::Timestep ts)
         }
     }
 
-    if (ctx.selectedEntity)
+    if (selectedEntity)
     {
         ImGui::ScopedStyle wp(ImGuiStyleVar_WindowPadding, ImVec2(8, 8));
         ImGui::ScopedStyle fp(ImGuiStyleVar_FramePadding, ImVec2(4, 4));
@@ -1832,11 +1834,12 @@ void Editor::InspectorWindow::DisplayAddComponentEntry(const std::string& entryN
 {
     auto& ctx = GetContext();
 
-    if (ctx.selectedEntity && !ctx.selectedEntity.HasComponent<T>())
+    auto selectedEntity = GetSelectedEntity();
+    if (selectedEntity && !selectedEntity.HasComponent<T>())
     {
         if (ImGui::MenuItem(entryName.c_str()))
         {
-            ctx.selectedEntity.AddComponent<T>();
+            selectedEntity.AddComponent<T>();
             Editor::Clear();
             ImGui::CloseCurrentPopup();
         }
