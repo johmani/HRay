@@ -1,10 +1,11 @@
 #include "HydraEngine/Base.h"
+#include "Icons.h"
 
 import Editor;
 import HE;
+import Math;
 import ImGui;
 import Assets;
-
 
 bool Editor::BeginMainMenuBar(bool customTitlebar, ImTextureRef icon, ImTextureRef close, ImTextureRef min, ImTextureRef max, ImTextureRef res)
 {
@@ -215,6 +216,143 @@ void Editor::BeginChildView(const char* str_id, Editor::Corner& corner, ImVec2 p
 void Editor::EndChildView()
 {
     ImGui::EndChild();
+}
+
+bool Editor::AssetPicker(const char* name, Assets::AssetHandle& assetHandle, Assets::AssetType type,Assets::Texture* texture, ImVec2 size)
+{
+    auto& am = Editor::GetAssetManager();
+    float dpiScale = ImGui::GetWindowDpiScale();
+    float scale = ImGui::GetIO().FontGlobalScale * dpiScale;
+    auto& style = ImGui::GetStyle();
+
+    bool res = false;
+
+    float availX = Math::max(300 * scale, ImGui::GetContentRegionAvail().x);
+
+    auto fp = Editor::GetAssetManager().GetFilePath(assetHandle).string();
+    
+    if (size.x > 0)
+    {
+        if (ImField::ImageButton(name, texture  && texture->texture ? texture->texture.Get() : Editor::GetIcon(Editor::AppIcons::Board), size))
+            ImGui::OpenPopup(name);
+    }
+    else
+    {
+        if (ImField::Button(name, fp.c_str()))
+            ImGui::OpenPopup(name);
+    }
+
+    if (am.IsAssetHandleValid(assetHandle) && ImGui::IsItemHovered() && ImGui::IsKeyDown(ImGuiKey::ImGuiKey_Delete))
+    {
+        assetHandle = 0;
+    }
+
+    ImGui::ScopedStyle ss(ImGuiStyleVar_WindowPadding, ImVec2(8, 8));
+    ImGui::ScopedStyle ssps(ImGuiStyleVar_PopupBorderSize, 0.0f);
+
+    ImGui::SetNextWindowSize({ availX, 0 });
+    //ImGui::SetNextWindowPos(ImGui::GetCursorScreenPos());
+    if (ImGui::BeginPopup(name))
+    {
+        const bool isAppearing = ImGui::IsWindowAppearing();
+        
+
+        static ImGuiTextFilter filter;
+        static bool focusRequested = true;
+        static const char* firstChar = "";
+
+        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
+        ImGui::InputTextWithHint("##Search", Icon_Search"  Search", filter.InputBuf, sizeof(filter.InputBuf), ImGuiInputTextFlags_CallbackAlways, [](ImGuiInputTextCallbackData* data) -> int {
+
+            if (firstChar)
+            {
+                data->SelectionEnd = false;
+                firstChar = nullptr;
+            }
+
+            return 1;
+        });
+
+        for (int i = ImGuiKey_0; i < ImGuiKey_Z; i++)
+        {
+            if (ImGui::IsKeyPressed((ImGuiKey)i) && !filter.IsActive())
+            {
+                firstChar = ImGui::GetKeyName((ImGuiKey)i);
+                focusRequested = true;
+            }
+        }
+
+        if (focusRequested && !filter.IsActive())
+        {
+            ImGui::SetKeyboardFocusHere(-1);
+            focusRequested = false;
+
+            if (firstChar)
+                filter.InputBuf[0] = firstChar[0];
+        }
+
+        if (isAppearing)
+        {
+            filter.Clear();
+            ImGui::SetKeyboardFocusHere(-1);
+        }
+
+        filter.Build();
+
+        for (auto& [handle, metaData] : am.metaMap)
+        {
+            std::string pathStr = metaData.filePath.string();
+            std::string handleStr = std::to_string(handle);
+            if (!filter.PassFilter(handleStr.c_str()) && !filter.PassFilter(pathStr.c_str()) && !filter.PassFilter(magic_enum::enum_name<Assets::AssetType>(metaData.type).data()))
+                continue;
+
+            if (metaData.filePath.empty() || metaData.type != type)
+                continue;
+
+            auto str = metaData.filePath.empty() ? "##Empty" : metaData.filePath.string();
+
+            if (size.x > 0)
+            {
+                auto t = am.GetAsset<Assets::Texture>(handle);
+
+                ImGui::BeginChild(handleStr.c_str(), { 0, size.y + 8 });
+
+                if (ImGui::ImageButton(handleStr.c_str(), t && t->texture ? t->texture.Get() : Editor::GetIcon(Editor::AppIcons::Board), size))
+                {
+                    assetHandle = handle;
+                    ImGui::CloseCurrentPopup();
+                    Editor::Clear();
+                    res = true;
+                }
+
+                ImGui::SameLine();
+
+                if (ImGui::Selectable(str.c_str()))
+                {
+                    assetHandle = handle;
+                    ImGui::CloseCurrentPopup();
+                    Editor::Clear();
+                    res = true;
+                }
+
+                ImGui::EndChild();
+            }
+            else
+            {
+                if (ImGui::Selectable(str.c_str()))
+                {
+                    assetHandle = handle;
+                    ImGui::CloseCurrentPopup();
+                    Editor::Clear();
+                    res = true;
+                }
+            }
+        }
+
+        ImGui::EndPopup();
+    }
+
+    return res;
 }
 
 std::string Editor::IncrementString(const std::string& str)

@@ -395,17 +395,19 @@ void Editor::ViewPortWindow::OnUpdate(HE::Timestep ts)
             }
 
             {
-                auto view = scene->registry.view<Assets::DynamicSkyLightComponent>();
+                auto view = scene->registry.view<Assets::SkyLightComponent>();
                 for (auto e : view)
                 {
                     Assets::Entity entity = { e, scene };
-                    auto& dynamicSkyLight = entity.GetComponent<Assets::DynamicSkyLightComponent>();
+                    auto& skyLight = entity.GetComponent<Assets::SkyLightComponent>();
+
                     auto wt = entity.GetWorldSpaceTransformMatrix();
 
                     Math::float3 position, scale, skew;
                     Math::quat rotation;
                     Math::vec4 perspective;
                     Math::decompose(wt, scale, rotation, position, skew, perspective);
+                    Math::float3 euler = Math::eulerAngles(rotation);
 
                     DrawIcon(
                         editorCamera->transform.position,
@@ -416,7 +418,7 @@ void Editor::ViewPortWindow::OnUpdate(HE::Timestep ts)
                         (uint32_t)e
                     );
 
-                    HRay::SubmitSkyLight(ctx.rd, fd, dynamicSkyLight);
+                    HRay::SubmitSkyLight(ctx.rd, fd, skyLight, euler.y);
                 }
 
                 fd.sceneInfo.light.enableEnvironmentLight = view.size();
@@ -1642,7 +1644,12 @@ void Editor::InspectorWindow::OnUpdate(HE::Timestep ts)
                         {
                             auto& mesh = ms->meshes[dm.meshIndex];
 
-                            if (ImField::Button("Mesh Source", meta.filePath.string().c_str(), { -1, 0 })) Editor::Clear();
+                            if (Editor::AssetPicker("Mesh Source", dm.meshSourceHandle, Assets::AssetType::MeshSource))
+                            {
+                                ms = ctx.assetManager.GetAsset<Assets::MeshSource>(dm.meshSourceHandle);
+                                dm.meshIndex = dm.meshIndex < ms->meshes.size() ? dm.meshIndex : 0;
+                            }
+
                             if (ImField::Button("Mesh", mesh.name.c_str(), { -1, 0 })) Editor::Clear();
                             if (ImField::InputUInt("Index", &dm.meshIndex))
                             {
@@ -1671,7 +1678,7 @@ void Editor::InspectorWindow::OnUpdate(HE::Timestep ts)
             {
                 auto& dm = ctx.selectedEntity.GetComponent<Assets::MeshComponent>();
                 auto ms = ctx.assetManager.GetAsset<Assets::MeshSource>(dm.meshSourceHandle);
-                if (ms)
+                if (ms && dm.meshIndex < ms->meshes.size())
                 {
                     auto& mesh = ms->meshes[dm.meshIndex];
 
@@ -1695,27 +1702,26 @@ void Editor::InspectorWindow::OnUpdate(HE::Timestep ts)
 
                                 ImField::Separator();
                                 auto baseT = ctx.assetManager.GetAsset<Assets::Texture>(mat->baseTextureHandle);
-                                if (ImField::ImageButton("Bace Texture", baseT ? baseT->texture.Get() : GetIcon(AppIcons::Board), size)) Editor::Clear();
+                                Editor::AssetPicker("Bace Texture", mat->baseTextureHandle, Assets::AssetType::Texture2D, baseT, size);
 
-                                TextureHandler(mat, mat->baseTextureHandle);
                                 if (ImField::ColorEdit4("Bace Color", &mat->baseColor.x)) Editor::Clear();
 
                                 ImField::Separator();
                                 auto normalT = ctx.assetManager.GetAsset<Assets::Texture>(mat->normalTextureHandle);
-                                if (ImField::ImageButton("Normal Texture", normalT ? normalT->texture.Get() : GetIcon(AppIcons::Board), size)) Editor::Clear();
-                                TextureHandler(mat, mat->normalTextureHandle);
+                                Editor::AssetPicker("Normal Texture", mat->normalTextureHandle, Assets::AssetType::Texture2D, normalT, size);
 
                                 ImField::Separator();
                                 auto metallicRoughnessT = ctx.assetManager.GetAsset<Assets::Texture>(mat->metallicRoughnessTextureHandle);
-                                if (ImField::ImageButton("Metallic Roughness Texture", metallicRoughnessT ? metallicRoughnessT->texture.Get() : GetIcon(AppIcons::Board), size)) Editor::Clear();
-                                TextureHandler(mat, mat->metallicRoughnessTextureHandle);
+                              
+                                Editor::AssetPicker("Metallic Roughness", mat->metallicRoughnessTextureHandle, Assets::AssetType::Texture2D, metallicRoughnessT, size);
+
                                 if (ImField::DragFloat("Metallic", &mat->metallic, 0.01f, 0.0f, 1.0f)) Editor::Clear();
                                 if (ImField::DragFloat("Roughness", &mat->roughness, 0.01f, 0.0f, 1.0f)) Editor::Clear();
 
                                 ImField::Separator();
                                 auto emissiveT = ctx.assetManager.GetAsset<Assets::Texture>(mat->emissiveTextureHandle);
-                                if (ImField::ImageButton("Emissive Texture", emissiveT ? emissiveT->texture.Get() : GetIcon(AppIcons::Board), size)) Editor::Clear();
-                                TextureHandler(mat, mat->emissiveTextureHandle);
+                                Editor::AssetPicker("Emissive Texture", mat->emissiveTextureHandle, Assets::AssetType::Texture2D, emissiveT, size);
+
                                 if (ImField::ColorEdit3("Emissive Color", &mat->emissiveColor.x)) Editor::Clear();
                                 if (ImField::DragFloat("Emissive Exposure", &mat->emissiveEV, 0.01f)) Editor::Clear();
 
@@ -1767,17 +1773,25 @@ void Editor::InspectorWindow::OnUpdate(HE::Timestep ts)
             ImField::EndBlock();
         }
 
-        if (ctx.selectedEntity.HasComponent<Assets::DynamicSkyLightComponent>())
+        if (ctx.selectedEntity.HasComponent<Assets::SkyLightComponent>())
         {
-            if (ImField::BeginBlock("Dynamic Sky Light", Icon_Sun, ctx.colors[Color::Light]))
+            if (ImField::BeginBlock("Sky Light", Icon_Sun, ctx.colors[Color::Light]))
             {
-                auto& c = ctx.selectedEntity.GetComponent<Assets::DynamicSkyLightComponent>();
+                auto& c = ctx.selectedEntity.GetComponent<Assets::SkyLightComponent>();
 
-                if (ImGui::BeginTable("Dynamic Sky Light", 2, ImGuiTableFlags_SizingFixedFit))
+                if (ImGui::BeginTable("Sky Light Table", 2, ImGuiTableFlags_SizingFixedFit))
                 {
-                    if (ImField::ColorEdit3("Ground Color", &c.groundColor.x)) Editor::Clear();
-                    if (ImField::ColorEdit3("Horizon Sky Color", &c.horizonSkyColor.x)) Editor::Clear();
-                    if (ImField::ColorEdit3("Zenith Sky Color", &c.zenithSkyColor.x)) Editor::Clear();
+                    if (Editor::AssetPicker("Environment Map", c.textureHandle, Assets::AssetType::Texture2D))
+                        c.totalSum = -1;
+
+                    if (ImField::DragFloat("Intensity", &c.intensity)) Editor::Clear();
+
+                    if (!c.textureHandle)
+                    {
+                        if (ImField::ColorEdit3("Ground Color", &c.groundColor.x)) Editor::Clear();
+                        if (ImField::ColorEdit3("Horizon Sky Color", &c.horizonSkyColor.x)) Editor::Clear();
+                        if (ImField::ColorEdit3("Zenith Sky Color", &c.zenithSkyColor.x)) Editor::Clear();
+                    }
 
                     ImGui::EndTable();
                 }
@@ -1805,52 +1819,12 @@ void Editor::InspectorWindow::OnUpdate(HE::Timestep ts)
             DisplayAddComponentEntry<Assets::TransformComponent>(Icon_Transform"  TransForm");
             DisplayAddComponentEntry<Assets::MeshComponent>(Icon_Mesh"  Mesh");
             DisplayAddComponentEntry<Assets::DirectionalLightComponent>(Icon_Sun"  Directional Light");
-            DisplayAddComponentEntry<Assets::DynamicSkyLightComponent>(Icon_Sun"  Dynamic Sky Light");
+            DisplayAddComponentEntry<Assets::SkyLightComponent>(Icon_Sun"  Sky Light");
             DisplayAddComponentEntry<Assets::CameraComponent>(Icon_Camera"  Camera");
 
             ImGui::EndPopup();
         }
     }
-}
-
-bool Editor::InspectorWindow::TextureHandler(Assets::Material* mat, Assets::AssetHandle handle)
-{
-    auto& ctx = GetContext();
-
-    if (ImGui::BeginDragDropTarget())
-    {
-        if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CONTENT_BROWSER_ITEM"))
-        {
-            Assets::AssetHandle handle = *(Assets::AssetHandle*)payload->Data;
-            if (ctx.assetManager.GetAssetType(handle) == Assets::AssetType::Texture2D)
-            {
-
-                return true;
-            }
-            else
-            {
-                HE_CORE_WARN("Wrong asset type!");
-            }
-        }
-        ImGui::EndDragDropTarget();
-    }
-
-    // Remove Texture
-    if (ctx.assetManager.IsAssetHandleValid(handle) && ImGui::IsItemFocused() && ImGui::IsKeyDown(ImGuiKey::ImGuiKey_Delete))
-    {
-        if (mat->baseTextureHandle == handle)
-            mat->baseTextureHandle = 0;
-        else if (mat->normalTextureHandle == handle)
-            mat->normalTextureHandle = 0;
-        else if (mat->metallicRoughnessTextureHandle == handle)
-            mat->metallicRoughnessTextureHandle = 0;
-        else if (mat->emissiveTextureHandle == handle)
-            mat->emissiveTextureHandle = 0;
-
-        return true;
-    }
-
-    return false;
 }
 
 template<typename T>
@@ -1863,7 +1837,7 @@ void Editor::InspectorWindow::DisplayAddComponentEntry(const std::string& entryN
         if (ImGui::MenuItem(entryName.c_str()))
         {
             ctx.selectedEntity.AddComponent<T>();
-
+            Editor::Clear();
             ImGui::CloseCurrentPopup();
         }
     }
@@ -2208,13 +2182,13 @@ void Editor::RendererSettingsWindow::OnUpdate(HE::Timestep ts)
                 auto cameraComponentCount = scene->registry.view<Assets::CameraComponent>().size();
                 auto meshComponentCount = scene->registry.view<Assets::MeshComponent>().size();
                 auto directionalLightComponentCount = scene->registry.view<Assets::DirectionalLightComponent>().size();
-                auto dynamicSkyLightComponentCount = scene->registry.view<Assets::DynamicSkyLightComponent>().size();
+                auto skyLightComponentCount = scene->registry.view<Assets::SkyLightComponent>().size();
 
                 ImField::Text("Transform Component Count", "%zd", transformComponentCount);
                 ImField::Text("Camera Component Count", "%zd", cameraComponentCount);
                 ImField::Text("Mesh Component Count", "%zd", meshComponentCount);
                 ImField::Text("Directional Light Component Count", "%zd", directionalLightComponentCount);
-                ImField::Text("Dynamic Sky Light Component Count", "%zd", dynamicSkyLightComponentCount);
+                ImField::Text("Sky Light Component Count", "%zd", skyLightComponentCount);
             }
 
             ImGui::EndTable();

@@ -160,12 +160,12 @@ static void InitEntityFactory()
         return newEntity;
     };
 
-    auto DynamicSkyLight = [](Assets::Scene* scene, Assets::UUID parent) -> Assets::Entity {
+    auto SkyLight = [](Assets::Scene* scene, Assets::UUID parent) -> Assets::Entity {
            
-        std::string name = Editor::GetIncrementedReletiveEntityName(scene, "Dynamic Sky Light", scene->FindEntity(parent));
+        std::string name = Editor::GetIncrementedReletiveEntityName(scene, "Sky Light", scene->FindEntity(parent));
         Assets::Entity newEntity = scene->CreateEntity(name, parent);
     
-        auto& dsl = newEntity.AddComponent<Assets::DynamicSkyLightComponent>();
+        auto& dsl = newEntity.AddComponent<Assets::SkyLightComponent>();
     
         return newEntity;
     };
@@ -213,7 +213,7 @@ static void InitEntityFactory()
         { "Mesh/Cone"                 , ConeMesh },
         { "Mesh/Torus"                , TorusMesh },
         { "Mesh/Suzanne"              , Suzanne },
-        { "Light/Dynamic Sky Light"   , DynamicSkyLight },
+        { "Light/Sky Light"           , SkyLight },
         { "Light/Directional"         , DirectionalLight },
         //{ "Light/Point"			      , PointLight },
         //{ "Light/Spot"			      , SpotLight },
@@ -526,13 +526,21 @@ void Editor::App::OnUpdate(const FrameInfo& info)
             }
 
             {
-                auto view = scene->registry.view<Assets::DynamicSkyLightComponent>();
+                auto view = scene->registry.view<Assets::SkyLightComponent>();
                 for (auto e : view)
                 {
                     Assets::Entity entity = { e, scene };
-                    auto& dynamicSkyLight = entity.GetComponent<Assets::DynamicSkyLightComponent>();
+                    auto& light = entity.GetComponent<Assets::SkyLightComponent>();
 
-                    HRay::SubmitSkyLight(ctx.rd, ctx.fd, dynamicSkyLight);
+                    auto wt = entity.GetWorldSpaceTransformMatrix();
+
+                    Math::float3 position, scale, skew;
+                    Math::quat rotation;
+                    Math::vec4 perspective;
+                    Math::decompose(wt, scale, rotation, position, skew, perspective);
+                    Math::float3 euler = Math::eulerAngles(rotation);
+
+                    HRay::SubmitSkyLight(ctx.rd, ctx.fd, light, euler.y);
                 }
 
                 ctx.fd.sceneInfo.light.enableEnvironmentLight = view.size();

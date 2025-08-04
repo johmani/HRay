@@ -45,6 +45,14 @@ struct SceneInfo
         float4 skyColourHorizon;
         float4 skyColourZenith;
 
+        float rotation;
+        float totalSum;
+        float2 size;
+
+        float intensity;
+        uint descriptorIndex;
+        float2 envPaddding;
+
         int directionalLightCount;
         bool enableEnvironmentLight;  
         float2 padding0;
@@ -305,6 +313,36 @@ float ComputeDepth(
     return (depthNDC + 1.0f) * 0.5f;
 }
 
+float4 EvalEnvMap(
+    float3 rayDirection, 
+    float envMapRot, 
+    float envMapTotalSum,
+    float2 envMapRes,
+    uint descriptorIndex
+)
+{
+    float theta = acos(clamp(rayDirection.y, -1.0, 1.0));
+    float2 uv = float2((c_PI + atan2(rayDirection.z, rayDirection.x)) * c_Inv_2PI, theta * c_Inv_PI) + float2(envMapRot, 0.0);
+
+    float3 envColor = float3(1, 1, 1);
+    if (descriptorIndex != c_Invalid)
+    {
+        Texture2D texture = bindlessTextures[NonUniformResourceIndex(descriptorIndex)];
+        float3 texColor = texture.SampleLevel(materialSampler, uv, 0).rgb;
+        envColor *= SRGBToLinear(texColor.rgb);
+    }
+   
+    float pdf = Luminance(envColor) / envMapTotalSum;
+
+    return float4(envColor, (pdf * envMapRes.x * envMapRes.y) / (c_2PI * c_PI * sin(theta)));
+}
+
+float PowerHeuristic(float a, float b)
+{
+    float t = a * a;
+    return t / (b * b + t);
+}
+
 [shader("raygeneration")]
 void RayGen()
 {
@@ -350,6 +388,8 @@ void RayGen()
 
         float3 radiance = float3(0, 0, 0);
         float3 throughput  = float3(1, 1, 1);
+
+        float pdf = 1;
 
         for (uint bounce = 0; bounce < sceneInfoBuffer.settings.maxLighteBounces; bounce++)
         {
@@ -410,7 +450,30 @@ void RayGen()
             }
             else
             {
-                radiance += EvaluateEnvironmentLight(rayOrigin, rayDirection) * throughput;
+                if (sceneInfoBuffer.light.descriptorIndex == c_Invalid)
+                {
+                    radiance += EvaluateEnvironmentLight(rayOrigin, rayDirection) * throughput;
+                }
+                else
+                {
+                    float4 envMapColPdf = EvalEnvMap(
+                        rayDirection,
+                        sceneInfoBuffer.light.rotation,
+                        sceneInfoBuffer.light.totalSum,
+                        sceneInfoBuffer.light.size,
+                        sceneInfoBuffer.light.descriptorIndex
+                    );
+
+                    float misWeight = 1.0;
+
+                    if (bounce > 0)
+                        misWeight = PowerHeuristic(pdf, envMapColPdf.w);
+
+                    if (misWeight > 0)
+                        radiance += misWeight * envMapColPdf.rgb * throughput * sceneInfoBuffer.light.intensity;
+
+                }
+
                 break;
             }
         }

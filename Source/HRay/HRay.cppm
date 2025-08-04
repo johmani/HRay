@@ -81,6 +81,14 @@ export namespace HRay {
             Math::float4 groundColor;
             Math::float4 horizonSkyColor;
             Math::float4 zenithSkyColor;
+
+            float rotation;
+            float totalSum;
+            Math::float2 size;
+
+            float intensity;
+            uint32_t descriptorIndex;
+            Math::float2 envPaddding;
             
             int directionalLightCount;
             bool enableEnvironmentLight = true;
@@ -223,7 +231,7 @@ export namespace HRay {
     void SubmitMesh(RendererData& data, FrameData& frameData, Assets::Asset asset, Assets::Mesh& mesh, Math::float4x4 wt, uint32_t id, nvrhi::ICommandList* cl);
     void SubmitMaterial(RendererData& data, FrameData& frameData, Assets::Asset materailAsset);
     void SubmitDirectionalLight(RendererData& data, FrameData& frameData, const Assets::DirectionalLightComponent& light, Math::float4x4 wt);
-    void SubmitSkyLight(RendererData& data, FrameData& frameData, const Assets::DynamicSkyLightComponent& light);
+    void SubmitSkyLight(RendererData& data, FrameData& frameData, Assets::SkyLightComponent& light, float rotation);
     void ReleaseTexture(RendererData& data, Assets::Texture* texture);
     void Clear(FrameData& frameData);
     nvrhi::ITexture* GetColorTarget(FrameData& frameData);

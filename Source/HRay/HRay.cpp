@@ -81,6 +81,11 @@ static float Luminance(float const ev100) noexcept
     return std::pow(2.0f, ev100 - 3.0f);
 }
 
+static float Luminance(float r, float g, float b)
+{
+    return 0.212671f * r + 0.715160f * g + 0.072169f * b;
+}
+
 static void CreateOrResizeRenderTarget(HRay::RendererData& data, HRay::FrameData& frameData, uint32_t width, uint32_t height)
 {
     HE_PROFILE_FUNCTION();
@@ -718,11 +723,79 @@ void HRay::SubmitDirectionalLight(RendererData& data, FrameData& frameData, cons
     frameData.sceneInfo.light.directionalLightCount++;
 }
 
-void HRay::SubmitSkyLight(RendererData& data, FrameData& frameData, const Assets::DynamicSkyLightComponent& light)
+void HRay::SubmitSkyLight(RendererData& data, FrameData& frameData, Assets::SkyLightComponent& light, float rotation)
 {
     frameData.sceneInfo.light.groundColor = Math::float4(Math::convertSRGBToLinear(light.groundColor), 1);
     frameData.sceneInfo.light.horizonSkyColor = Math::float4(Math::convertSRGBToLinear(light.horizonSkyColor), 1);
     frameData.sceneInfo.light.zenithSkyColor = Math::float4(Math::convertSRGBToLinear(light.zenithSkyColor), 1);
+    frameData.sceneInfo.light.rotation = rotation;
+    frameData.sceneInfo.light.intensity = light.intensity;
+    frameData.sceneInfo.light.descriptorIndex = c_Invalid;
+
+    auto asset = data.am->GetAsset(light.textureHandle);
+    if (!asset || asset.GetState() != Assets::AssetState::Loaded)
+        return;
+
+    Assets::Texture* hdr = data.am->GetAsset<Assets::Texture>(light.textureHandle);
+
+    auto width = hdr->texture->getDesc().width;
+    auto height = hdr->texture->getDesc().height;
+    frameData.sceneInfo.light.size = { width, height };
+
+    if (hdr && hdr->texture && !hdr->descriptor.IsValid())
+    {
+        hdr->descriptor = data.descriptorTable->CreateDescriptorHandle(nvrhi::BindingSetItem::Texture_SRV(0, hdr->texture));
+        data.textureCount++;
+    }
+
+    if (light.totalSum == -1)
+    {
+        float* weights = new float[width * height];
+
+        const auto& desc = hdr->texture->getDesc();
+        auto commandList = data.device->createCommandList({ .enableImmediateExecution = false });
+        commandList->open();
+        nvrhi::StagingTextureHandle stagingTexture = data.device->createStagingTexture(desc, nvrhi::CpuAccessMode::Read);
+        HE_VERIFY(stagingTexture);
+        commandList->copyTexture(stagingTexture, nvrhi::TextureSlice(), hdr->texture, nvrhi::TextureSlice());
+        commandList->close();
+        data.device->executeCommandList(commandList);
+
+        size_t rowPitch = 0;
+        void* pData = data.device->mapStagingTexture(stagingTexture, nvrhi::TextureSlice(), nvrhi::CpuAccessMode::Read, &rowPitch);
+        HE_VERIFY(pData);
+
+        for (uint32_t y = 0; y < height; ++y)
+        {
+            const float* row = reinterpret_cast<const float*>(reinterpret_cast<const uint8_t*>(pData) + y * rowPitch);
+
+            for (uint32_t x = 0; x < width; ++x)
+            {
+                float r = row[x * 3 + 0];
+                float g = row[x * 3 + 1];
+                float b = row[x * 3 + 2];
+
+                weights[x + y * width] = Luminance(r, g, b);
+            }
+        }
+
+        data.device->unmapStagingTexture(stagingTexture);
+
+        // Build CDF
+        float* cdf = new float[width * height];
+        cdf[0] = weights[0];
+        for (uint32_t i = 1; i < width * height; i++)
+            cdf[i] = cdf[i - 1] + weights[i];
+
+        float sum = cdf[width * height - 1];
+        light.totalSum = sum;
+
+        delete[] weights;
+        delete[] cdf;
+    }
+
+    frameData.sceneInfo.light.totalSum = light.totalSum;
+    frameData.sceneInfo.light.descriptorIndex = hdr ? hdr->descriptor.Get() : c_Invalid;
 }
 
 void HRay::Clear(FrameData& frameData)

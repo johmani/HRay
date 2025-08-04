@@ -535,7 +535,7 @@ export namespace Editor {
     void EndMainMenuBar();
     void BeginChildView(const char* str_id, Corner& location, ImVec2 padding = 5);
     void EndChildView();
-
+    bool AssetPicker(const char* name, Assets::AssetHandle& assetHandle, Assets::AssetType type, Assets::Texture* texture = nullptr, ImVec2 size = { 0, 0 });
     std::string IncrementString(const std::string& str);
 
 
@@ -631,7 +631,6 @@ export namespace Editor {
     struct InspectorWindow : Window
     {
         void OnUpdate(HE::Timestep ts) override;
-        bool TextureHandler(Assets::Material* mat, Assets::AssetHandle handle);
 
         template<typename T> void DisplayAddComponentEntry(const std::string& entryName);
     };
