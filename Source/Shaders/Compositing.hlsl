@@ -40,7 +40,7 @@ void Main(uint2 id : SV_DispatchThreadID)
     uint entityID;
     float4 fg, bg;
 
-    if (sceneDepth[id].r < ResolveUILayerDepth(id))
+    if (sceneDepth[id].r <= ResolveUILayerDepth(id))
     {
         fg = sceneCol;
         bg = uiCol;

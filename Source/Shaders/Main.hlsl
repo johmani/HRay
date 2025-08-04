@@ -332,7 +332,7 @@ void RayGen()
     focusPoint    = sceneInfoBuffer.view.focalCenter + offset;
 
     float3 finalColor = 0;
-    float depthValue = 1000;
+    float depthValue = 1;
     uint entityID = 4294967295u;
 
     for (uint i = 0; i < sceneInfoBuffer.settings.maxSamples; i++)
