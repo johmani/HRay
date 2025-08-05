@@ -126,6 +126,8 @@ void Editor::ViewPortWindow::OnUpdate(HE::Timestep ts)
     auto& ctx = GetContext();
     Assets::Scene* scene = ctx.assetManager.GetAsset<Assets::Scene>(ctx.sceneHandle);
 
+    bool isWindowFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows);
+
     {
         HE_PROFILE_SCOPE("Render");
 
@@ -500,7 +502,7 @@ void Editor::ViewPortWindow::OnUpdate(HE::Timestep ts)
         }
     }
 
-    if(ImGui::IsWindowFocused())
+    if(isWindowFocused)
     {
         if (ImGui::IsKeyDown(ImGuiKey_LeftAlt) && ImGui::IsKeyPressed(ImGuiKey_1))
             SetOrbitCamera();
@@ -521,17 +523,10 @@ void Editor::ViewPortWindow::OnUpdate(HE::Timestep ts)
             else
                 Preview();
         }
-
-        auto hoveredEntity = GetHoveredEntity();
-        if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !ImGuizmo::IsUsing())
-        {
-            Editor::SelectEntity(hoveredEntity);
-        }
     }
 
     {
         auto selectedEntity = GetSelectedEntity();
-        bool isWindowFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows);
         auto viewportMinRegion = ImGui::GetCursorScreenPos();
         auto viewportMaxRegion = ImGui::GetCursorScreenPos() + ImGui::GetContentRegionAvail();
         auto viewportOffset = ImGui::GetWindowPos();
@@ -647,6 +642,22 @@ void Editor::ViewPortWindow::OnUpdate(HE::Timestep ts)
                     tc.scale = scale;
 
                     clearReq |= true;
+                }
+            }
+
+            {
+                ImVec2 pos = ImGui::GetMousePos();
+                pos.x -= viewportBounds[0].x;
+                pos.y -= viewportBounds[0].y;
+                Math::vec2 viewportSize = viewportBounds[1] - viewportBounds[0];
+
+                if (pos.x >= 0 && pos.y >= 0 && pos.x < (int)viewportSize.x && pos.y < (int)viewportSize.y)
+                {
+                    pixelPosition = { pos.x , pos.y};
+                    Assets::Entity hoveredEntity = { (entt::entity)selected, scene };
+
+                    if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !ImGuizmo::IsUsing())
+                        Editor::SelectEntity(hoveredEntity);
                 }
             }
         }
@@ -1130,24 +1141,17 @@ void Editor::ViewPortWindow::SetRendererToEditorCameraProp(HRay::FrameData& fram
     frameData.sceneInfo.view.focusDistance = 10;
 }
 
-Assets::Entity Editor::ViewPortWindow::GetHoveredEntity()
+Assets::Entity Editor::ViewPortWindow::GetHoveredEntity(Assets::Scene* scene)
 {
     auto& ctx = GetContext();
-    Assets::Scene* scene = ctx.assetManager.GetAsset<Assets::Scene>(ctx.sceneHandle);
 
-    auto [mx, my] = ImGui::GetMousePos();
-    mx -= viewportBounds[0].x;
-    my -= viewportBounds[0].y;
+    ImVec2 pos = ImGui::GetMousePos();
+    pos.x -= viewportBounds[0].x;
+    pos.y -= viewportBounds[0].y;
     Math::vec2 viewportSize = viewportBounds[1] - viewportBounds[0];
 
-    int mouseX = (int)mx;
-    int mouseY = (int)my;
-
-    if (mouseX >= 0 && mouseY >= 0 && mouseX < (int)viewportSize.x && mouseY < (int)viewportSize.y)
-    {
-        pixelPosition = { mouseX, mouseY };
+    if (pos.x >= 0 && pos.y >= 0 && pos.x < (int)viewportSize.x && pos.y < (int)viewportSize.y)
         return { (entt::entity)selected, scene };
-    }
 
     return {};
 }

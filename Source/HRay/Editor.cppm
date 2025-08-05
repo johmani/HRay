@@ -593,7 +593,7 @@ export namespace Editor {
         Math::uvec2 pixelPosition = { 0, 0 };
         uint32_t selected = -1;
 
-        Assets::Entity GetHoveredEntity();
+        Assets::Entity GetHoveredEntity(Assets::Scene* scene);
 
         void OnCreate() override;
         void OnUpdate(HE::Timestep ts) override;
