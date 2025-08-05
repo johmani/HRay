@@ -351,7 +351,7 @@ void RayGen()
     ndc            = ndc * 2.0 - 1.0;
     ndc.y          = -ndc.y; // Flip Y for DX
 
-    uint rngState        = rayIndex.y * (uint)sceneInfoBuffer.view.viewSize.x + rayIndex.x;
+    uint randomNum       = rayIndex.y * (uint)sceneInfoBuffer.view.viewSize.x + rayIndex.x;
     RayDesc primaryRay   = CreatePrimaryRay(ndc, sceneInfoBuffer.view.clipToWorld, sceneInfoBuffer.view.cameraPosition);
     float3 rayOrigin     = primaryRay.Origin;
     float3 rayDirection  = primaryRay.Direction;
@@ -375,15 +375,15 @@ void RayGen()
 
     for (uint i = 0; i < sceneInfoBuffer.settings.maxSamples; i++)
     {
-        rngState += (sceneInfoBuffer.view.frameIndex + i) * 895623;
+        randomNum += (sceneInfoBuffer.view.frameIndex + i) * 895623;
        
         if (sceneInfoBuffer.view.enableDepthOfField)
         {
-            float2 originOffset = RandomPointInCircle(rngState) * sceneInfoBuffer.view.focusFalloff;
+            float2 originOffset = RandomPointInCircle(randomNum) * sceneInfoBuffer.view.focusFalloff;
             rayOrigin           = sceneInfoBuffer.view.cameraPosition + right * originOffset.x + up * originOffset.y;
         }
 
-        float2 targetOffset = RandomPointInCircle(rngState) * sceneInfoBuffer.view.apertureRadius;
+        float2 targetOffset = RandomPointInCircle(randomNum) * sceneInfoBuffer.view.apertureRadius;
         rayDirection = normalize((focusPoint + right * targetOffset.x + up * targetOffset.y) - rayOrigin);
 
         float3 radiance = float3(0, 0, 0);
@@ -434,7 +434,7 @@ void RayGen()
                 radiance += payload.emissive * throughput;
                 throughput *= payload.baseColor.rgb;
 
-                float3 diffuse = normalize(payload.normal + RandomDirection(rngState));
+                float3 diffuse = normalize(payload.normal + RandomDirection(randomNum));
                 float3 specular = reflect(rayDirection, payload.normal);
 
                 rayOrigin = hitPoint + payload.normal * c_RayPosNormalOffset;
@@ -444,7 +444,7 @@ void RayGen()
                 if (bounce > 2)
                 {
                     float q = min(max(throughput.x, max(throughput.y, throughput.z)) + 0.001, 0.95);
-                    if (RandomFloat(rngState) > q) break;
+                    if (RandomFloat(randomNum) > q) break;
                     throughput /= q;
                 }
             }
