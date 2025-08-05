@@ -1189,6 +1189,13 @@ void Editor::ViewPortWindow::Serialize(std::ostringstream& out)
     }
     out << "\t\t},\n";
 
+    out << "\t\t\"viewSettings\" : {\n";
+    {
+        out << "\t\t\t\"tonMappingType\" : \"" << magic_enum::enum_name<HRay::TonMapingType>(fd.sceneInfo.postProssing.tonMappingType) << "\",\n";
+        out << "\t\t\t\"renderingMode\" : \"" << magic_enum::enum_name<HRay::RenderingMode>(fd.sceneInfo.settings.renderingMode) << "\"\n";
+    }
+    out << "\t\t},\n";
+
     out << "\t\t\"toolsCorner\" : {\n";
     {
         out << "\t\t\t\"toolbarCorner\" : \"" << magic_enum::enum_name<Corner>(toolbarCorner) << "\",\n";
@@ -1313,6 +1320,22 @@ void Editor::ViewPortWindow::Deserialize(simdjson::dom::element element)
 
         if (!debugElement["colorOpacity"].error())
             debug.colorOpacity = (float)debugElement["colorOpacity"].get_double().value();
+    }
+
+    auto settings = element["viewSettings"];
+    if (!settings.error())
+    {
+        if (!settings["tonMappingType"].error())
+        {
+            auto str = settings["tonMappingType"].get_c_str().value();
+            fd.sceneInfo.postProssing.tonMappingType = magic_enum::enum_cast<HRay::TonMapingType>(str).value();
+        }
+
+        if (!settings["renderingMode"].error())
+        {
+            auto str = settings["renderingMode"].get_c_str().value();
+            fd.sceneInfo.settings.renderingMode = magic_enum::enum_cast<HRay::RenderingMode>(str).value();
+        }
     }
 }
 
