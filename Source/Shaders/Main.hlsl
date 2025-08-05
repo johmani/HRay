@@ -548,7 +548,7 @@ void ClosestHit(inout HitInfo payload : SV_RayPayload, HitAttributes attr : SV_I
     {
         Texture2D texture = bindlessTextures[NonUniformResourceIndex(gs.material.metallicRoughnessTextureIndex)];
         float3 texColor   = texture.SampleLevel(materialSampler, uv, 0).rgb;
-        metallic          = texColor.r;
+        metallic          = texColor.b;
         roughness         = max(texColor.g * texColor.g, 0.001);
     }
 
