@@ -1417,9 +1417,9 @@ void Editor::HierarchyWindow::OnUpdate(HE::Timestep ts)
     {
         ImGui::ScopedStyle wp(ImGuiStyleVar_WindowPadding, ImVec2(8, 8));
         ImGui::ScopedStyle fp(ImGuiStyleVar_FramePadding, ImVec2(4, 4));
-        ImGui::BeginChild("Searsh", ImVec2(ImGui::GetContentRegionAvail().x, 0), ImGuiChildFlags_AlwaysUseWindowPadding | ImGuiChildFlags_AutoResizeY);
+        ImGui::BeginChild("Search", ImVec2(ImGui::GetContentRegionAvail().x, 0), ImGuiChildFlags_AlwaysUseWindowPadding | ImGuiChildFlags_AutoResizeY);
         ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
-        ImGui::InputTextWithHint("##Searsh", Icon_Search"  Searsh", filter.InputBuf, sizeof(filter.InputBuf));
+        ImGui::InputTextWithHint("##Search", Icon_Search"  Search", filter.InputBuf, sizeof(filter.InputBuf));
         filter.Build();
         ImGui::EndChild();
     }
@@ -1882,10 +1882,10 @@ void  Editor::AssetManagerWindow::OnUpdate(HE::Timestep ts)
 
     ImGui::ScopedStyle wp(ImGuiStyleVar_WindowPadding, ImVec2(8, 8));
     ImGui::ScopedStyle fp(ImGuiStyleVar_FramePadding, ImVec2(4, 4));
-    ImGui::BeginChild("Searsh", ImVec2(ImGui::GetContentRegionAvail().x, 0), ImGuiChildFlags_AlwaysUseWindowPadding | ImGuiChildFlags_ResizeY | ImGuiChildFlags_AutoResizeY);
+    ImGui::BeginChild("Search", ImVec2(ImGui::GetContentRegionAvail().x, 0), ImGuiChildFlags_AlwaysUseWindowPadding | ImGuiChildFlags_ResizeY | ImGuiChildFlags_AutoResizeY);
 
     ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
-    ImGui::InputTextWithHint("##Searsh", Icon_Search"  Searsh", filter.InputBuf, sizeof(filter.InputBuf));
+    ImGui::InputTextWithHint("##Search", Icon_Search"  Search", filter.InputBuf, sizeof(filter.InputBuf));
     filter.Build();
     ImGui::EndChild();
 
