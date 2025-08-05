@@ -670,7 +670,7 @@ void Editor::ViewPortWindow::OnUpdate(HE::Timestep ts)
                 ImGui::ScopedFont sf(Editor::FontType::Blod, Editor::FontSize::Caption);
                 ImGui::ScopedStyle ss(ImGuiStyleVar_ButtonTextAlign, ImVec2(0.6f, 0.6f));
                 ImGui::ScopedStyle ssis(ImGuiStyleVar_ItemSpacing, ImVec2(1.0f, 1.0f));
-                ImVec2 buttonSize = ImVec2(24, 24) * io.FontGlobalScale + style.FramePadding * 2;
+                ImVec2 buttonSize = ImVec2(24, 24) * scale + style.FramePadding * 2;
 
                 if (ImGui::SelectableButton(Icon_Arrow, buttonSize, gizmoType == -1))
                 {
@@ -713,7 +713,7 @@ void Editor::ViewPortWindow::OnUpdate(HE::Timestep ts)
             ImGui::ScopedStyle sswp(ImGuiStyleVar_WindowPadding, ImVec2(3.0f, 3.0f));
             
             {
-                ImVec2 buttonSize = ImVec2(18, 18) * io.FontGlobalScale + style.FramePadding * 2;
+                ImVec2 buttonSize = ImVec2(18, 18) * scale + style.FramePadding * 2;
 
                 ImGui::BeginChild("Overlay", { 0, 0 }, ImGuiChildFlags_AutoResizeX | ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_Borders);
                 
@@ -730,10 +730,10 @@ void Editor::ViewPortWindow::OnUpdate(HE::Timestep ts)
 
                 {
                     ImGui::ScopedStyle ss(ImGuiStyleVar_WindowPadding, ImVec2(8, 8));
-                    ImGui::SetNextWindowSize({ 300 * io.FontGlobalScale, 0 });
+                    ImGui::SetNextWindowSize({ 300 * scale, 0 });
                     if (ImGui::BeginPopup("Mesh Debugging Overlay"))
                     {
-                        ImVec2 buttonSize = ImVec2(60, 16) * io.FontGlobalScale + style.FramePadding * 2;
+                        ImVec2 buttonSize = ImVec2(60, 16) * scale + style.FramePadding * 2;
 
                         {
                             ImGui::ScopedFont sf(Editor::FontType::Blod);
@@ -798,11 +798,11 @@ void Editor::ViewPortWindow::OnUpdate(HE::Timestep ts)
 
                 {
                     ImGui::ScopedStyle ss(ImGuiStyleVar_WindowPadding, ImVec2(8, 8));
-                    ImGui::SetNextWindowSize({ 300 * io.FontGlobalScale, 0 });
+                    ImGui::SetNextWindowSize({ 300 * scale, 0 });
 
                     if (ImGui::BeginPopup("View Overlay"))
                     {
-                        ImVec2 buttonSize = ImVec2(70, 16) * io.FontGlobalScale + style.FramePadding * 2;
+                        ImVec2 buttonSize = ImVec2(70, 16) * scale + style.FramePadding * 2;
 
                         {
                             ImGui::ScopedFont sf(Editor::FontType::Blod);
@@ -910,7 +910,7 @@ void Editor::ViewPortWindow::OnUpdate(HE::Timestep ts)
             //{
             //    ImGui::ScopedFont sf(Editor::FontType::Blod, Editor::FontSize::Caption);
             //    ImGui::ScopedStyle ss(ImGuiStyleVar_ButtonTextAlign, ImVec2(0.6f, 0.6f));
-            //    ImVec2 buttonSize = ImVec2(18, 18) * io.FontGlobalScale + style.FramePadding * 2;
+            //    ImVec2 buttonSize = ImVec2(18, 18) * scale + style.FramePadding * 2;
             //
             //    ImGui::BeginChild("Renderers", { 0, 0 }, ImGuiChildFlags_AutoResizeX | ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_Borders);
             //
@@ -1542,8 +1542,6 @@ void Editor::InspectorWindow::OnUpdate(HE::Timestep ts)
     if (selectedEntity)
     {
         auto cf = ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding;
-
-        //ImGui::ScopedColorStack sc(ImGuiCol_Header, ImVec4(0, 0, 0, 0), ImGuiCol_HeaderHovered, ImVec4(0, 0, 0, 0), ImGuiCol_HeaderActive, ImVec4(0, 0, 0, 0));
 
         {
             ImGui::ScopedStyle wp(ImGuiStyleVar_WindowPadding, ImVec2(8, 8));
