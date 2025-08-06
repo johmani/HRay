@@ -128,55 +128,54 @@ void Editor::ViewPortWindow::OnUpdate(HE::Timestep ts)
 
     bool isWindowFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows);
 
+    Assets::Entity mainCameraEntity = Editor::GetSceneCamera(scene);
+    Math::float4x4 viewMatrix;
+    Math::float4x4 projectionMatrix;
+    Math::float3 cameraPosition;
+    float fov;
+
+    if (scene && previewMode && mainCameraEntity && cameraAnimation.state & Animation::None)
+    {
+        auto& c = mainCameraEntity.GetComponent<Assets::CameraComponent>();
+        auto wt = mainCameraEntity.GetWorldSpaceTransformMatrix();
+        viewMatrix = Math::inverse(wt);
+        fov = c.perspectiveFieldOfView;
+
+        Math::float3 s, skew;
+        Math::quat quaternion;
+        Math::vec4 perspective;
+        Math::decompose(wt, s, quaternion, cameraPosition, skew, perspective);
+
+        float aspectRatio = (float)width / (float)height;
+
+        if (c.projectionType == Assets::CameraComponent::ProjectionType::Perspective)
+        {
+            projectionMatrix = Math::perspective(glm::radians(c.perspectiveFieldOfView), aspectRatio, c.perspectiveNear, c.perspectiveFar);
+        }
+        else
+        {
+            float orthoLeft = -c.orthographicSize * aspectRatio * 0.5f;
+            float orthoRight = c.orthographicSize * aspectRatio * 0.5f;
+            float orthoBottom = -c.orthographicSize * 0.5f;
+            float orthoTop = c.orthographicSize * 0.5f;
+            projectionMatrix = Math::ortho(orthoLeft, orthoRight, orthoBottom, orthoTop, c.orthographicNear, c.orthographicFar);
+        }
+
+        Editor::SetRendererToSceneCameraProp(fd, c);
+    }
+    else
+    {
+        viewMatrix = editorCamera->view.view;
+        projectionMatrix = editorCamera->view.projection;
+        cameraPosition = editorCamera->transform.position;
+        fov = editorCamera->view.fov;
+    }
+
     {
         HE_PROFILE_SCOPE("Render");
 
         if (scene)
         {
-            Assets::Entity mainCameraEntity = Editor::GetSceneCamera(scene);
-
-            Math::float4x4 viewMatrix;
-            Math::float4x4 projection;
-            Math::float3 camPos;
-            float fov;
-
-            if (previewMode && mainCameraEntity && cameraAnimation.state & Animation::None)
-            {
-                auto& c = mainCameraEntity.GetComponent<Assets::CameraComponent>();
-                auto wt = mainCameraEntity.GetWorldSpaceTransformMatrix();
-                viewMatrix = Math::inverse(wt);
-                fov = c.perspectiveFieldOfView;
-
-                Math::float3 s, skew;
-                Math::quat quaternion;
-                Math::vec4 perspective;
-                Math::decompose(wt, s, quaternion, camPos, skew, perspective);
-
-                float aspectRatio = (float)width / (float)height;
-
-                if (c.projectionType == Assets::CameraComponent::ProjectionType::Perspective)
-                {
-                    projection = Math::perspective(glm::radians(c.perspectiveFieldOfView), aspectRatio, c.perspectiveNear, c.perspectiveFar);
-                }
-                else
-                {
-                    float orthoLeft = -c.orthographicSize * aspectRatio * 0.5f;
-                    float orthoRight = c.orthographicSize * aspectRatio * 0.5f;
-                    float orthoBottom = -c.orthographicSize * 0.5f;
-                    float orthoTop = c.orthographicSize * 0.5f;
-                    projection = Math::ortho(orthoLeft, orthoRight, orthoBottom, orthoTop, c.orthographicNear, c.orthographicFar);
-                }
-
-                Editor::SetRendererToSceneCameraProp(fd, c);
-            }
-            else
-            {
-                viewMatrix = editorCamera->view.view;
-                projection = editorCamera->view.projection;
-                camPos = editorCamera->transform.position;
-                fov = editorCamera->view.fov;
-            }
-
             HRay::BeginScene(ctx.rd, fd);
 
             if (!pixelReadbackPass.device)
@@ -192,7 +191,7 @@ void Editor::ViewPortWindow::OnUpdate(HE::Timestep ts)
                     tiny2DView,
                     ctx.commandList,
                     {
-                        projection * viewMatrix,
+                        projectionMatrix * viewMatrix,
                         { width, height },
                         format,
                         8
@@ -426,7 +425,7 @@ void Editor::ViewPortWindow::OnUpdate(HE::Timestep ts)
                 fd.sceneInfo.light.enableEnvironmentLight = view.size();
             }
 
-            HRay::EndScene(ctx.rd, fd, ctx.commandList, { viewMatrix, projection, camPos, fov, (uint32_t)width, (uint32_t)height });
+            HRay::EndScene(ctx.rd, fd, ctx.commandList, { viewMatrix, projectionMatrix, cameraPosition, fov, (uint32_t)width, (uint32_t)height });
             Tiny2D::EndScene();
 
             {
@@ -603,9 +602,6 @@ void Editor::ViewPortWindow::OnUpdate(HE::Timestep ts)
                     viewportBounds[1].y - viewportBounds[0].y
                 );
 
-                const Math::mat4& cameraProjection = editorCamera->view.projection;
-                Math::float4x4 cameraView = editorCamera->view.view;
-
                 auto& tc = selectedEntity.GetComponent<Assets::TransformComponent>();
                 Math::float4x4 entityWorldSpaceTransform = selectedEntity.GetWorldSpaceTransformMatrix();
 
@@ -618,8 +614,8 @@ void Editor::ViewPortWindow::OnUpdate(HE::Timestep ts)
                 float snapValues[3] = { snapValue, snapValue, snapValue };
 
                 bool b = ImGuizmo::Manipulate(
-                    Math::value_ptr(cameraView),
-                    Math::value_ptr(cameraProjection),
+                    Math::value_ptr(viewMatrix),
+                    Math::value_ptr(projectionMatrix),
                     (ImGuizmo::OPERATION)gizmoType,
                     ImGuizmo::WORLD,
                     Math::value_ptr(entityWorldSpaceTransform),
