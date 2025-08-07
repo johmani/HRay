@@ -4,12 +4,7 @@
 
 #pragma region Constants
 
-
-#define INSTANCE_MASK_OPAQUE                1
-#define INSTANCE_MASK_PARTICLE_GEOMETRY     2
-#define INSTANCE_MASK_INTERSECTION_PARTICLE 4
-
-static const float c_RayPosNormalOffset = 0.001;
+static const float c_RayOffset = 0.001;
 static const float c_PI = 3.14159265;
 static const float c_2PI = 2.0f * c_PI;
 static const float c_Inv_PI = 1.0 / c_PI;
@@ -179,15 +174,6 @@ float2 RandomPointInCircle(inout uint rngState)
     return pointOnCircle * sqrt(RandomFloat(rngState));
 }
 
-float2 CartesianToSphericalUnorm(float3 p)
-{
-    p = normalize(p);
-    float2 sph;
-    sph.x = acos(p.z) * c_PI;
-    sph.y = atan2(-p.y, -p.x) * c_PI + 0.5f;
-    return sph;
-}
-
 float3 SRGBToLinear(float3 c)
 {
     return pow(c, 2.2);
@@ -196,6 +182,36 @@ float3 SRGBToLinear(float3 c)
 float3 LinearToSRGB(float3 c)
 {
     return pow(c, 1 / 2.2);
+}
+
+RayDesc CreatePrimaryRay(float2 uv, float4x4 clipToWorld, float3 cameraPosition)
+{
+    float4 clipPos = float4(uv, 1.0, 1.0);
+
+    float4 worldPos = mul(clipToWorld, clipPos);
+    worldPos.xyz /= worldPos.w;
+
+    RayDesc ray;
+    ray.Origin = cameraPosition;
+    ray.Direction = normalize(worldPos.xyz - cameraPosition);
+    ray.TMin = 0;
+    ray.TMax = 1000;
+
+    return ray;
+}
+
+float ComputeDepth(
+    float3 cameraOrigin,
+    float3 cameraForward,
+    float3 hitPosition,
+    float nearPlane,
+    float farPlane
+)
+{
+    float3 camToHit = hitPosition - cameraOrigin;
+    float zEye = -length(camToHit) * dot(cameraForward, normalize(camToHit));
+    float depthNDC = ((farPlane + nearPlane) + (2.0 * farPlane * nearPlane) / zEye) / (farPlane - nearPlane);
+    return (depthNDC + 1.0f) * 0.5f;
 }
 
 void GetCameraRightUp(float4x4 clipToWorld, out float3 camRight, out float3 camUp)

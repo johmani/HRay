@@ -694,10 +694,10 @@ void HRay::SubmitMaterial(RendererData& data, FrameData& frameData, Assets::Asse
     uint32_t index = frameData.materials.at(handle);
     auto& mat = frameData.materialData[index];
 
-    mat.baseColor           = Math::convertSRGBToLinear(material.baseColor);
+    mat.baseColor           = material.baseColor;
     mat.metallic            = material.metallic;
     mat.roughness           = material.roughness;
-    mat.emissiveColor       = Math::convertSRGBToLinear(material.emissiveColor) * (material.emissiveEV);
+    mat.emissiveColor       = material.emissiveColor * material.emissiveEV;
     
     mat.uvSet = (int)material.uvSet;
     mat.baseTextureIndex = baseTexture ? baseTexture->descriptor.Get() : c_Invalid;
@@ -713,7 +713,7 @@ void HRay::SubmitDirectionalLight(RendererData& data, FrameData& frameData, cons
         CreateOrResizeDirectionalLightBuffer(data, frameData, (uint32_t)frameData.directionalLightData.size() * 2);
 
     HRay::DirectionalLightData& l = frameData.directionalLightData[frameData.sceneInfo.light.directionalLightCount];
-    l.color = Math::convertSRGBToLinear(light.color);
+    l.color = light.color;
     l.intensity = light.intensity;
     l.angularRadius = light.angularRadius;
     l.haloSize = light.haloSize;
@@ -725,9 +725,9 @@ void HRay::SubmitDirectionalLight(RendererData& data, FrameData& frameData, cons
 
 void HRay::SubmitSkyLight(RendererData& data, FrameData& frameData, Assets::SkyLightComponent& light, float rotation)
 {
-    frameData.sceneInfo.light.groundColor = Math::float4(Math::convertSRGBToLinear(light.groundColor), 1);
-    frameData.sceneInfo.light.horizonSkyColor = Math::float4(Math::convertSRGBToLinear(light.horizonSkyColor), 1);
-    frameData.sceneInfo.light.zenithSkyColor = Math::float4(Math::convertSRGBToLinear(light.zenithSkyColor), 1);
+    frameData.sceneInfo.light.groundColor = Math::float4((light.groundColor), 1);
+    frameData.sceneInfo.light.horizonSkyColor = Math::float4((light.horizonSkyColor), 1);
+    frameData.sceneInfo.light.zenithSkyColor = Math::float4((light.zenithSkyColor), 1);
     frameData.sceneInfo.light.rotation = rotation;
     frameData.sceneInfo.light.intensity = light.intensity;
     frameData.sceneInfo.light.descriptorIndex = c_Invalid;

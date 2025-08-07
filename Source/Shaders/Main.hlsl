@@ -1,5 +1,9 @@
 ﻿#include "Base.hlsli"
 
+//#define LAMBERT
+#define SIMPLE
+#include "BRDF.hlsli"
+
 struct SceneInfo
 {
     struct View
@@ -243,22 +247,6 @@ GeometrySample SampleGeometry(
     return gs;
 }
 
-RayDesc CreatePrimaryRay(float2 uv, float4x4 clipToWorld, float3 cameraPosition)
-{
-    float4 clipPos = float4(uv, 1.0, 1.0);
-
-    float4 worldPos = mul(clipToWorld, clipPos);
-    worldPos.xyz /= worldPos.w;
-
-    RayDesc ray;
-    ray.Origin = cameraPosition;
-    ray.Direction = normalize(worldPos.xyz - cameraPosition);
-    ray.TMin = 0;
-    ray.TMax = 1000;
-
-    return ray;
-}
-
 float3 EvaluateEnvironmentLight(float3 rayOrigin, float3 rayDirection)
 {
     float3 totalSunColor = 0;
@@ -299,48 +287,22 @@ float3 EvaluateEnvironmentLight(float3 rayOrigin, float3 rayDirection)
     return totalSunColor;
 }
 
-float ComputeDepth(
-    float3 cameraOrigin,
-    float3 cameraForward,
-    float3 hitPosition,
-    float nearPlane,
-    float farPlane
-)
-{
-    float3 camToHit = hitPosition - cameraOrigin;
-    float zEye = -length(camToHit) * dot(cameraForward, normalize(camToHit));
-    float depthNDC = ((farPlane + nearPlane) + (2.0 * farPlane * nearPlane) / zEye) / (farPlane - nearPlane);
-    return (depthNDC + 1.0f) * 0.5f;
-}
-
-float4 EvalEnvMap(
+float4 EvaluateEnvironmenMap(
     float3 rayDirection, 
-    float envMapRot, 
-    float envMapTotalSum,
-    float2 envMapRes,
+    float rotation,
+    float totalSum,
+    float2 size,
     uint descriptorIndex
 )
 {
     float theta = acos(clamp(rayDirection.y, -1.0, 1.0));
-    float2 uv = float2((c_PI + atan2(rayDirection.z, rayDirection.x)) * c_Inv_2PI, theta * c_Inv_PI) + float2(envMapRot, 0.0);
+    float2 uv = float2((c_PI + atan2(rayDirection.z, rayDirection.x)) * c_Inv_2PI, theta * c_Inv_PI) + float2(rotation, 0.0);
 
-    float3 envColor = float3(1, 1, 1);
-    if (descriptorIndex != c_Invalid)
-    {
-        Texture2D texture = bindlessTextures[NonUniformResourceIndex(descriptorIndex)];
-        float3 texColor = texture.SampleLevel(materialSampler, uv, 0).rgb;
-        envColor *= SRGBToLinear(texColor.rgb);
-    }
-   
-    float pdf = Luminance(envColor) / envMapTotalSum;
+    Texture2D texture = bindlessTextures[NonUniformResourceIndex(descriptorIndex)];
+    float3 color = texture.SampleLevel(materialSampler, uv, 0).rgb;
+    float pdf = Luminance(color) / totalSum;
 
-    return float4(envColor, (pdf * envMapRes.x * envMapRes.y) / (c_2PI * c_PI * sin(theta)));
-}
-
-float PowerHeuristic(float a, float b)
-{
-    float t = a * a;
-    return t / (b * b + t);
+    return float4(color, (pdf * size.x * size.y) / (c_2PI * c_PI * sin(theta)));
 }
 
 [shader("raygeneration")]
@@ -371,7 +333,7 @@ void RayGen()
 
     float3 finalColor = 0;
     float depthValue = 1;
-    uint entityID = 4294967295u;
+    uint entityID = c_Invalid;
 
     for (uint i = 0; i < sceneInfoBuffer.settings.maxSamples; i++)
     {
@@ -432,13 +394,19 @@ void RayGen()
                 }
 
                 radiance += payload.emissive * throughput;
-                throughput *= payload.baseColor.rgb;
+                float3 L;
+                float3 f = SampleBRDF(payload, -rayDirection, payload.ffnormal, L, pdf, randomNum);
+                if (pdf > 0)
+                {
+                    throughput *= f / pdf;
+                }
+                else
+                {
+                    break;
+                }
 
-                float3 diffuse = normalize(payload.normal + RandomDirection(randomNum));
-                float3 specular = reflect(rayDirection, payload.normal);
-
-                rayOrigin = hitPoint + payload.normal * c_RayPosNormalOffset;
-                rayDirection = normalize(lerp(specular, diffuse, payload.roughness));
+                rayDirection = L;
+                rayOrigin = hitPoint + rayDirection * c_RayOffset;
 
                 // Russian roulette
                 if (bounce > 2)
@@ -456,7 +424,7 @@ void RayGen()
                 }
                 else
                 {
-                    float4 envMapColPdf = EvalEnvMap(
+                    float4 envMapColPdf = EvaluateEnvironmenMap(
                         rayDirection,
                         sceneInfoBuffer.light.rotation,
                         sceneInfoBuffer.light.totalSum,
@@ -464,14 +432,7 @@ void RayGen()
                         sceneInfoBuffer.light.descriptorIndex
                     );
 
-                    float misWeight = 1.0;
-
-                    if (bounce > 0)
-                        misWeight = PowerHeuristic(pdf, envMapColPdf.w);
-
-                    if (misWeight > 0)
-                        radiance += misWeight * envMapColPdf.rgb * throughput * sceneInfoBuffer.light.intensity;
-
+                    radiance += envMapColPdf.rgb * throughput * sceneInfoBuffer.light.intensity;
                 }
 
                 break;
@@ -501,15 +462,14 @@ void RayGen()
     
         switch (sceneInfoBuffer.postProssing.tonMappingType)
         {
-        case c_TonMapingType_None:                                                            break;
-        case c_TonMapingType_WhatEver:   color = Tonemap(color, 1.5);                         break;
-        case c_TonMapingType_ACES:       color = ACES(color);                                 break;
-        case c_TonMapingType_ACESFitted: color = ACESFitted(color);                           break;
+        case c_TonMapingType_None:                                                                        break;
+        case c_TonMapingType_WhatEver:   color = Tonemap(color, 1.5);                                     break;
+        case c_TonMapingType_ACES:       color = ACES(color);                                             break;
+        case c_TonMapingType_ACESFitted: color = ACESFitted(color);                                       break;
         case c_TonMapingType_Filmic:     color = Filmic(color, sceneInfoBuffer.postProssing.exposure);    break;
         case c_TonMapingType_Reinhard:   color = Reinhard(color, sceneInfoBuffer.postProssing.exposure);  break;
         }
         
-        color = color = pow(color, 1 / sceneInfoBuffer.postProssing.gamma);
         LDRColor[rayIndex] = float4(color, 1);
     }
 }
@@ -530,16 +490,14 @@ void ClosestHit(inout HitInfo payload : SV_RayPayload, HitAttributes attr : SV_I
     if (gs.material.baseTextureIndex != c_Invalid)
     {
         Texture2D texture  = bindlessTextures[NonUniformResourceIndex(gs.material.baseTextureIndex)];
-        float4 texColor    = texture.SampleLevel(materialSampler, uv, 0);
-        baseColor         *= float4(SRGBToLinear(texColor.rgb), texColor.a);
+        baseColor          *= texture.SampleLevel(materialSampler, uv, 0);
     }
 
     float3 emissiveColor = gs.material.emissiveColor;
     if (gs.material.emissiveTextureIndex != c_Invalid)
     {
         Texture2D texture  = bindlessTextures[NonUniformResourceIndex(gs.material.emissiveTextureIndex)];
-        float3 texColor    = texture.SampleLevel(materialSampler, uv, 0).rgb;
-        emissiveColor     *= SRGBToLinear(texColor);
+        emissiveColor     *= texture.SampleLevel(materialSampler, uv, 0).rgb;
     }
 
     float metallic  = gs.material.metallic;
