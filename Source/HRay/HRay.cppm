@@ -33,6 +33,13 @@ export namespace HRay {
         Bitangent
     };
 
+    enum class AlfaMode : int
+    {
+        Opaque,
+        Mask,
+        Blend
+    };
+
     struct SceneInfo
     {
         struct View
@@ -154,6 +161,9 @@ export namespace HRay {
         uint32_t emissiveTextureIndex = c_Invalid;
         uint32_t metallicRoughnessTextureIndex = c_Invalid;
         uint32_t normalTextureIndex = c_Invalid;
+
+        AlfaMode alfaMode = AlfaMode::Opaque;
+        float alphaCutoff = 0.01f;
 
         Math::float3x3 uvMat;
     };

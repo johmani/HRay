@@ -294,7 +294,7 @@ void HRay::Init(RendererData& data, nvrhi::DeviceHandle pDevice, nvrhi::CommandL
         pipelineDesc.hitGroups = { {
             "HitGroup",
             data.shaderLibrary->getShader("ClosestHit", nvrhi::ShaderType::ClosestHit),
-            nullptr,
+            data.shaderLibrary->getShader("AnyHit", nvrhi::ShaderType::AnyHit),
             nullptr,
             nullptr,
             false
@@ -573,7 +573,13 @@ void HRay::SubmitMesh(RendererData& data, FrameData& frameData, Assets::Asset as
             triangles.vertexStride = Assets::GetVertexAttributeSize(Assets::VertexAttribute::Position);
             triangles.vertexCount = geometry.vertexCount;
             geometryDesc.geometryType = nvrhi::rt::GeometryType::Triangles;
-            geometryDesc.flags = nvrhi::rt::GeometryFlags::Opaque;
+
+            switch (geometry.alfaMode)
+            {
+            case Assets::AlfaMode::Opaque: geometryDesc.flags = nvrhi::rt::GeometryFlags::Opaque; break;
+            case Assets::AlfaMode::Blend: geometryDesc.flags = nvrhi::rt::GeometryFlags::None; break;
+            case Assets::AlfaMode::Mask: geometryDesc.flags = nvrhi::rt::GeometryFlags::None; break;
+            }
         }
 
         mesh.accelStruct = data.device->createAccelStruct(blasDesc);
@@ -698,6 +704,9 @@ void HRay::SubmitMaterial(RendererData& data, FrameData& frameData, Assets::Asse
     mat.metallic            = material.metallic;
     mat.roughness           = material.roughness;
     mat.emissiveColor       = material.emissiveColor * material.emissiveEV;
+
+    mat.alfaMode            = (HRay::AlfaMode)material.alfaMode;
+    mat.alphaCutoff         = material.alphaCutoff;
     
     mat.uvSet = (int)material.uvSet;
     mat.baseTextureIndex = baseTexture ? baseTexture->descriptor.Get() : c_Invalid;

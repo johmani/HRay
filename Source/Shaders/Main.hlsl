@@ -4,6 +4,13 @@
 #define SIMPLE
 #include "BRDF.hlsli"
 
+enum AlfaMode
+{
+    AlfaMode_Opaque,
+    AlfaMode_Mask,
+    AlfaMode_Blend
+};
+
 struct SceneInfo
 {
     struct View
@@ -121,6 +128,9 @@ struct Material
     uint emissiveTextureIndex;
     uint metallicRoughnessTextureIndex;
     uint normalTextureIndex;
+
+    int alfaMode;
+    float alphaCutoff;
 
     float3x3 uvMat;
 };
@@ -537,6 +547,32 @@ void ClosestHit(inout HitInfo payload : SV_RayPayload, HitAttributes attr : SV_I
     payload.emissive           = emissiveColor;
     payload.distance           = RayTCurrent();
     payload.entityID           = gs.entityID;
+}
+
+
+[shader("anyhit")]
+void AnyHit(inout HitInfo payload : SV_RayPayload, HitAttributes attr : SV_IntersectionAttributes)
+{
+    uint instanceID = InstanceID();
+    uint primitiveIndex = PrimitiveIndex();
+    uint geometryIndex = GeometryIndex();
+
+    GeometrySample gs = SampleGeometry(instanceID, primitiveIndex, geometryIndex, attr.barycentrics);
+    
+    if (gs.material.alfaMode != AlfaMode_Blend)
+        return;
+
+    float2 uv = mul(float3(gs.texcoord, 1.0), gs.material.uvMat).xy;
+    
+    float4 baseColor = gs.material.baseColor;
+    if (gs.material.baseTextureIndex != c_Invalid)
+    {
+        Texture2D texture = bindlessTextures[NonUniformResourceIndex(gs.material.baseTextureIndex)];
+        baseColor *= texture.SampleLevel(materialSampler, uv, 0);
+    }
+
+    if (baseColor.a < gs.material.alphaCutoff)
+        IgnoreHit();
 }
 
 [shader("miss")]

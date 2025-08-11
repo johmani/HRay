@@ -1749,6 +1749,21 @@ void Editor::InspectorWindow::OnUpdate(HE::Timestep ts)
                                 if (ImField::DragFloat("Emissive Exposure", &mat->emissiveEV, 0.01f)) Editor::Clear();
 
                                 ImField::Separator();
+
+                                {
+                                    if (ImField::DragFloat("AlphaCutoff", &mat->alphaCutoff, 0.01f, 0.0f, 1.0f)) Editor::Clear();
+
+                                    int selected = 0;
+                                    auto currentTypeStr = magic_enum::enum_name<Assets::AlfaMode>(mat->alfaMode);
+                                    auto types = magic_enum::enum_names<Assets::AlfaMode>();
+                                    if (ImField::Combo("Alfa Mode", types, currentTypeStr, selected))
+                                    {
+                                        mat->alfaMode = magic_enum::enum_cast<Assets::AlfaMode>(types[selected]).value();
+                                        Editor::Clear();
+                                    }
+                                }
+
+                                ImField::Separator();
                                 if (ImField::DragFloat2("Offset", &mat->offset.x, 0.01f)) Editor::Clear();
                                 if (ImField::DragFloat2("Scale", &mat->scale.x, 0.01f)) Editor::Clear();
                                 float deg = Math::degrees(mat->rotation);
