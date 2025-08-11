@@ -152,9 +152,15 @@ export namespace HRay {
         Math::float4 baseColor = { 1.0f, 1.0f, 1.0f, 1.0f };
         float metallic = 0.0f;
         float roughness = 0.5f;
-        int uvSet = 0;
-        int padding0;
-
+        float anisotropic = 0;
+        float subsurface = 0;
+        float specularTint = 0;
+        float sheen = 0;
+        float sheenTint = 0;
+        float clearcoat = 0;
+        float clearcoatRoughness = 0;
+        float transmission = 0;
+        float ior = 1.5;
         Math::float3 emissiveColor = {0.0f, 0.0f, 0.0f};
 
         uint32_t baseTextureIndex = c_Invalid;
@@ -165,6 +171,7 @@ export namespace HRay {
         AlfaMode alfaMode = AlfaMode::Opaque;
         float alphaCutoff = 0.01f;
 
+        int uvSet = 0;
         Math::float3x3 uvMat;
     };
 

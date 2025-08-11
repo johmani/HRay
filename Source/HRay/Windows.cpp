@@ -1741,6 +1741,20 @@ void Editor::InspectorWindow::OnUpdate(HE::Timestep ts)
                                 if (ImField::DragFloat("Metallic", &mat->metallic, 0.01f, 0.0f, 1.0f)) Editor::Clear();
                                 if (ImField::DragFloat("Roughness", &mat->roughness, 0.01f, 0.0f, 1.0f)) Editor::Clear();
 
+                                if (ImField::DragFloat("Anisotropic", &mat->anisotropic, 0.01f, 0.0f, 1.0f)) Editor::Clear();
+                                if (ImField::DragFloat("Subsurface", &mat->subsurface, 0.01f, 0.0f, 1.0f)) Editor::Clear();
+
+                                if (ImField::DragFloat("Specular Tint", &mat->specularTint, 0.01f, 0.0f, 1.0f)) Editor::Clear();
+
+                                if (ImField::DragFloat("Sheen", &mat->sheen, 0.01f, 0.0f, 1.0f)) Editor::Clear();
+                                if (ImField::DragFloat("Sheen Tint", &mat->sheenTint, 0.01f, 0.0f, 1.0f)) Editor::Clear();
+
+                                if (ImField::DragFloat("Clearcoat", &mat->clearcoat, 0.01f, 0.0f, 1.0f)) Editor::Clear();
+                                if (ImField::DragFloat("Clearcoat Roughness", &mat->clearcoatRoughness, 0.01f, 0.0f, 1.0f)) Editor::Clear();
+
+                                if (ImField::DragFloat("Transmission", &mat->transmission, 0.01f, 0.0f, 1.0f)) Editor::Clear();
+                                if (ImField::DragFloat("IOR", &mat->ior, 0.01f, 0.0f)) Editor::Clear();
+
                                 ImField::Separator();
                                 auto emissiveT = ctx.assetManager.GetAsset<Assets::Texture>(mat->emissiveTextureHandle);
                                 Editor::AssetPicker("Emissive Texture", mat->emissiveTextureHandle, Assets::AssetType::Texture2D, emissiveT, size);

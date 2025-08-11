@@ -1,8 +1,7 @@
 ﻿#include "Base.hlsli"
 
-//#define LAMBERT
-#define SIMPLE
-#include "BRDF.hlsli"
+#define DISNEY_BRDF
+#include "BXDF/BXDF.hlsli"
 
 enum TonMapingType
 {
@@ -137,9 +136,15 @@ struct Material
     float4 baseColor;
     float metallic;
     float roughness;
-    int uvSet;
-    int padding0;
-
+    float anisotropic;
+    float subsurface;
+    float specularTint;
+    float sheen;
+    float sheenTint;
+    float clearcoat;
+    float clearcoatRoughness;
+    float transmission;
+    float ior;
     float3 emissiveColor;
 
     uint baseTextureIndex;
@@ -150,6 +155,7 @@ struct Material
     int alfaMode;
     float alphaCutoff;
 
+    int uvSet;
     float3x3 uvMat;
 };
 
@@ -448,7 +454,7 @@ void RayGen()
             {
                 if (sceneInfoBuffer.light.descriptorIndex == c_Invalid)
                 {
-                    radiance += EvaluateEnvironmentLight(rayOrigin, rayDirection) * throughput;
+                    radiance += EvaluateEnvironmentLight(rayOrigin, rayDirection) * throughput * sceneInfoBuffer.light.intensity;
                 }
                 else
                 {
@@ -564,7 +570,21 @@ void ClosestHit(inout HitInfo payload : SV_RayPayload, HitAttributes attr : SV_I
     payload.roughness          = roughness;
     payload.emissive           = emissiveColor;
     payload.distance           = RayTCurrent();
+    payload.anisotropic        = gs.material.anisotropic;
+    payload.subsurface         = gs.material.subsurface;
+    payload.specularTint       = gs.material.specularTint;
+    payload.sheen              = gs.material.sheen;
+    payload.sheenTint          = gs.material.sheenTint;
+    payload.clearcoat          = gs.material.clearcoat;
+    payload.clearcoatRoughness = lerp(0.1, 0.001, gs.material.clearcoatRoughness); // Remapping from gloss to roughness
+    payload.transmission       = gs.material.transmission;
+    payload.ior                = gs.material.ior;
     payload.entityID           = gs.entityID;
+
+    float aspect = sqrt(1.0 - payload.anisotropic * 0.9);
+    payload.ax = max(0.001, payload.roughness / aspect);
+    payload.ay = max(0.001, payload.roughness * aspect);
+    payload.eta = dot(rayDirection, payload.normal) < 0.0 ? (1.0 / payload.ior) : payload.ior;
 }
 
 

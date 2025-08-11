@@ -32,6 +32,18 @@ struct HitInfo
     float3 emissive;
     float metallic;
     float roughness;
+    float anisotropic;
+    float subsurface;
+    float specularTint;
+    float sheen;
+    float sheenTint;
+    float clearcoat;
+    float clearcoatRoughness;
+    float transmission;
+    float ior;
+
+    float eta;
+    float ax, ay;
 
     bool HasHit() { return distance < 1000; }
 };
@@ -161,6 +173,34 @@ float2 RandomPointInCircle(inout uint rngState)
     float angle = RandomFloat(rngState) * c_2PI;
     float2 pointOnCircle = float2(cos(angle), sin(angle));
     return pointOnCircle * sqrt(RandomFloat(rngState));
+}
+
+float3 CosineSampleHemisphere(float r1, float r2)
+{
+    float3 dir;
+    float r = sqrt(r1);
+    float phi = c_2PI * r2;
+    dir.x = r * cos(phi);
+    dir.y = r * sin(phi);
+    dir.z = sqrt(max(0.0, 1.0 - dir.x * dir.x - dir.y * dir.y));
+    return dir;
+}
+
+float3 ToWorld(float3 X, float3 Y, float3 Z, float3 V)
+{
+    return V.x * X + V.y * Y + V.z * Z;
+}
+
+float3 ToLocal(float3 X, float3 Y, float3 Z, float3 V)
+{
+    return float3(dot(V, X), dot(V, Y), dot(V, Z));
+}
+
+void Onb(in float3 N, inout float3 T, inout float3 B)
+{
+    float3 up = abs(N.z) < 0.9999999 ? float3(0, 0, 1) : float3(1, 0, 0);
+    T = normalize(cross(up, N));
+    B = cross(N, T);
 }
 
 float3 SRGBToLinear(float3 c)

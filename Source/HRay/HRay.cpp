@@ -42,6 +42,18 @@ struct HitInfo
     Math::float3 emissive;
     float metallic;
     float roughness;
+    float anisotropic;
+    float subsurface;
+    float specularTint;
+    float sheen;
+    float sheenTint;
+    float clearcoat;
+    float clearcoatRoughness;
+    float specTrans;
+    float ior;
+
+    float eta;
+    float ax, ay;
 };
 
 static void GetCameraBasis(const Math::float4x4& clipToWorld, Math::float3& camFront, Math::float3& camUp, Math::float3& camRight)
@@ -704,6 +716,15 @@ void HRay::SubmitMaterial(RendererData& data, FrameData& frameData, Assets::Asse
     mat.metallic            = material.metallic;
     mat.roughness           = material.roughness;
     mat.emissiveColor       = material.emissiveColor * material.emissiveEV;
+    mat.anisotropic         = material.anisotropic;
+    mat.subsurface          = material.subsurface;       
+    mat.specularTint        = material.specularTint;      
+    mat.sheen               = material.sheen;
+    mat.sheenTint           = material.sheenTint;
+    mat.clearcoat           = material.clearcoat;
+    mat.clearcoatRoughness  = material.clearcoatRoughness;
+    mat.transmission        = material.transmission;
+    mat.ior                 = material.ior;
 
     mat.alfaMode            = (HRay::AlfaMode)material.alfaMode;
     mat.alphaCutoff         = material.alphaCutoff;
