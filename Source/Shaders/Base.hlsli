@@ -18,17 +18,6 @@ static const uint c_SizeOfTexcoord = 8;
 static const uint c_SizeOfJointIndices = 8;
 static const uint c_SizeOfJointWeights = 16;
 
-static const uint c_TonMapingType_None = 0;
-static const uint c_TonMapingType_WhatEver = 1;
-static const uint c_TonMapingType_ACES = 2;
-static const uint c_TonMapingType_ACESFitted = 3;
-static const uint c_TonMapingType_Filmic = 4;
-static const uint c_TonMapingType_Reinhard = 5;
-
-static const uint c_RenderingMode_PathTracing = 0;
-static const uint c_RenderingMode_Normals = 1;
-static const uint c_RenderingMode_Tangent = 2;
-static const uint c_RenderingMode_Bitangent = 3;
 
 struct HitInfo
 {

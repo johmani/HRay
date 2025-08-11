@@ -4,6 +4,24 @@
 #define SIMPLE
 #include "BRDF.hlsli"
 
+enum TonMapingType
+{
+    TonMapingType_None,
+    TonMapingType_WhatEver,
+    TonMapingType_ACES,
+    TonMapingType_ACESFitted,
+    TonMapingType_Filmic,
+    TonMapingType_Reinhard,
+};
+
+enum RenderingMode
+{
+    RenderingMode_PathTracing,
+    RenderingMode_Normals,
+    RenderingMode_Tangent,
+    RenderingMode_Bitangent
+};
+
 enum AlfaMode
 {
     AlfaMode_Opaque,
@@ -387,17 +405,17 @@ void RayGen()
                     entityID = payload.entityID;
                 }
 
-                if (sceneInfoBuffer.settings.renderingMode == c_RenderingMode_Normals)
+                if (sceneInfoBuffer.settings.renderingMode == RenderingMode_Normals)
                 {
                     radiance = payload.normal;
                     break;
                 }
-                else if (sceneInfoBuffer.settings.renderingMode == c_RenderingMode_Tangent)
+                else if (sceneInfoBuffer.settings.renderingMode == RenderingMode_Tangent)
                 {
                     radiance = payload.tangent;
                     break;
                 }
-                else if (sceneInfoBuffer.settings.renderingMode == c_RenderingMode_Bitangent)
+                else if (sceneInfoBuffer.settings.renderingMode == RenderingMode_Bitangent)
                 {
                     radiance = payload.bitangent;
                     break;
@@ -472,12 +490,12 @@ void RayGen()
     
         switch (sceneInfoBuffer.postProssing.tonMappingType)
         {
-        case c_TonMapingType_None:                                                                        break;
-        case c_TonMapingType_WhatEver:   color = Tonemap(color, 1.5);                                     break;
-        case c_TonMapingType_ACES:       color = ACES(color);                                             break;
-        case c_TonMapingType_ACESFitted: color = ACESFitted(color);                                       break;
-        case c_TonMapingType_Filmic:     color = Filmic(color, sceneInfoBuffer.postProssing.exposure);    break;
-        case c_TonMapingType_Reinhard:   color = Reinhard(color, sceneInfoBuffer.postProssing.exposure);  break;
+        case TonMapingType_None:                                                                        break;
+        case TonMapingType_WhatEver:   color = Tonemap(color, 1.5);                                     break;
+        case TonMapingType_ACES:       color = ACES(color);                                             break;
+        case TonMapingType_ACESFitted: color = ACESFitted(color);                                       break;
+        case TonMapingType_Filmic:     color = Filmic(color, sceneInfoBuffer.postProssing.exposure);    break;
+        case TonMapingType_Reinhard:   color = Reinhard(color, sceneInfoBuffer.postProssing.exposure);  break;
         }
         
         LDRColor[rayIndex] = float4(color, 1);
